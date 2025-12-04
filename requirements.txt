@@ -1,0 +1,52 @@
+# ----------------------------------------------------------------------
+# 1. CORE FRAMEWORK AND GPU ACCELERATION
+# These are essential for running large models on A100/H100 GPUs.
+# NOTE: Replace '==X.X.X+cuXXX' with the version compatible with your
+# CUDA Toolkit environment (e.g., PyTorch 2.3+ with CUDA 12.1).
+# ----------------------------------------------------------------------
+torch                              # Foundational deep learning framework (requires CUDA build) [B: 79]
+torchvision                        # Companion library for vision tasks
+transformers                       # For loading Qwen, SigLIP 2, and Qwen2-Audio models [B: 66, B: 55, B: 69]
+accelerate                         # Handles efficient multi-GPU and distributed computation [B: 33]
+datasets                           # For loading instruction-tuning data (JSONL format) [B: 75, B: 28]
+
+# ----------------------------------------------------------------------
+# 2. TRAINING EFFICIENCY AND QUANTIZATION
+# Critical packages for LoRA fine-tuning using the Unsloth framework.
+# ----------------------------------------------------------------------
+unsloth[qwen]                      # Specialized framework for 2x faster, 60% less memory Qwen LoRA tuning [B: 78, B: 31]
+bitsandbytes                       # Required to enable 4-bit quantization (INT4), essential for large models like Qwen-72B [B: 80, B: 81]
+peft                               # Parameter-Efficient Fine-Tuning library (implements LoRA) [B: 78, A: 4]
+trl                                # Likely used alongside PEFT for supervised fine-tuning/instruction tuning [B: 75]
+
+# ----------------------------------------------------------------------
+# 3. PERCEPTION AND FEATURE EXTRACTION SUBSYSTEMS
+# Libraries for SAM 3, SigLIP 2, InternVideo2.5, and specialized OCR.
+# ----------------------------------------------------------------------
+ultralytics                        # Often used for implementing or interfacing with Segment Anything Model 3 (SAM 3) [B: 47, B: 86]
+opencv-python                      # Standard library for video reading, frame extraction, and manipulation [B: 62]
+paddleocr                          # Recommended default OCR engine (PP-OCRv4) for fast, video-based text extraction [B: 74, B: 72]
+Pillow                             # Image processing library for handling inputs to vision models
+scikit-video                       # Useful for additional video processing utilities
+
+# ----------------------------------------------------------------------
+# 4. AUDIO AND TEMPORAL LIBRARIES
+# Supports Qwen2-Audio and InternVideo2.5 processing.
+# ----------------------------------------------------------------------
+soundfile                          # Necessary for reading and writing audio files (for Qwen2-Audio)
+librosa                            # Standard library for audio analysis (mel spectrograms, etc.) [B: 70]
+decord                             # Fast video decoding for InternVideo2.5 HiCo (RunPod/Linux only)
+av                                 # Video loading fallback (cross-platform)
+imageio                            # Additional video/image I/O utilities
+
+# ----------------------------------------------------------------------
+# 5. SCIENTIFIC COMPUTING
+# Required for mask operations and numerical processing.
+# ----------------------------------------------------------------------
+scipy                              # Required for mask dilation in SigLIP encoder
+
+# ----------------------------------------------------------------------
+# 6. OPTIONAL: GPU ACCELERATION AND SAFETY
+# ----------------------------------------------------------------------
+flash-attn                         # Flash Attention 2 for InternVideo2.5 (GPU only, improves performance)
+# salmonn-guard                    # Recommended for mitigating speech-audio composition attacks [B: 71]
