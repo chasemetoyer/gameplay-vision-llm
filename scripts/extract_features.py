@@ -221,18 +221,50 @@ def build_timeline(
     return timeline
 
 
-def format_for_gpt(timeline: list[dict], video_name: str) -> str:
+def build_knowledge_base(timeline: list[dict], video_name: str):
+    """Build the entity knowledge base from timeline events."""
+    from fusion_indexing.knowledge_base_builder import KnowledgeBaseBuilder, KBConfig
+    
+    kb = KnowledgeBaseBuilder(KBConfig())
+    
+    # Process timeline events into KB
+    for event in timeline:
+        timestamp = event["timestamp"]
+        content = event["content"]
+        evt_type = event["type"]
+        
+        # Add entities based on event type
+        if evt_type == "ocr":
+            # Link OCR text to video entity
+            kb.add_entity(
+                name=f"OCR_Event_{timestamp:.1f}",
+                entity_type="text_event",
+                attributes={"text": content, "timestamp": timestamp}
+            )
+        elif evt_type == "visual":
+            # Link visual event to video entity
+            kb.add_entity(
+                name=f"Visual_Event_{timestamp:.1f}",
+                entity_type="visual_event",
+                attributes={"description": content, "timestamp": timestamp}
+            )
+            
+    return kb
+
+
+def format_for_gpt(timeline: list[dict], kb, video_name: str) -> str:
     """
-    Format timeline as text context for GPT-4 Q&A generation.
+    Format timeline and KB as text context for GPT-4 Q&A generation.
     """
     lines = [
         f"# Video Analysis: {video_name}",
         f"# Generated: {datetime.now().isoformat()}",
         "",
-        "## Timeline Events",
+        "## Timeline Context",
         ""
     ]
     
+    # 1. Timeline Section
     for event in timeline:
         ts = event["timestamp"]
         mins = int(ts // 60)
@@ -248,7 +280,23 @@ def format_for_gpt(timeline: list[dict], video_name: str) -> str:
             lines.append(f"{timestamp_str} [{motion_type.upper()}] {event['content']}")
         else:
             lines.append(f"{timestamp_str} {event['content']}")
+            
+    # 2. Entity Knowledge Base Section
+    lines.extend([
+        "",
+        "## Entity Knowledge Base",
+        "(Structured facts and potential causal links)",
+        ""
+    ])
     
+    # Export KB to text format
+    # Since KB export might be complex, we'll do a simple dump of entities for now
+    # In a real scenario, you'd use kb.export_to_text() or similar
+    for entity_id, entity in kb.entities.items():
+        lines.append(f"- Entity: {entity.name} ({entity.entity_type})")
+        for k, v in entity.attributes.items():
+            lines.append(f"  - {k}: {v}")
+            
     return "\n".join(lines)
 
 
@@ -286,8 +334,12 @@ def main():
     logger.info("Step 4: Building timeline...")
     timeline = build_timeline(frames, ocr_results, visual_results)
     
-    # Step 5: Save outputs
-    logger.info("Step 5: Saving outputs...")
+    # Step 5: Build Knowledge Base
+    logger.info("Step 5: Building Knowledge Base...")
+    kb = build_knowledge_base(timeline, video_name)
+    
+    # Step 6: Save outputs
+    logger.info("Step 6: Saving outputs...")
     
     # Save raw JSON
     output_json = os.path.join(args.output, f"{video_name}_features.json")
@@ -304,7 +356,7 @@ def main():
     
     # Save GPT-ready text
     output_txt = os.path.join(args.output, f"{video_name}_context.txt")
-    gpt_text = format_for_gpt(timeline, video_name)
+    gpt_text = format_for_gpt(timeline, kb, video_name)
     with open(output_txt, "w") as f:
         f.write(gpt_text)
     logger.info(f"Saved: {output_txt}")
