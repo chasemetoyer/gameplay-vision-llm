@@ -357,10 +357,27 @@ class QwenAudioModel:
             logger.info("Qwen2-Audio loaded successfully (via AutoModel)")
             return
         except Exception as e:
-            logger.warning(f"Failed to load Qwen2-Audio: {e}")
-            logger.warning("Using placeholder model - audio analysis disabled")
-            self._model = "placeholder"
-            self._processor = None
+            logger.info(f"AutoModel fallback failed: {e}, trying Whisper...")
+        
+        # Final fallback: Use OpenAI Whisper for transcription
+        try:
+            import whisper
+            
+            logger.info("Loading OpenAI Whisper as audio fallback...")
+            self._model = whisper.load_model("base", device=self.config.device)
+            self._processor = "whisper"  # Flag for whisper mode
+            self._whisper_mode = True
+            logger.info("OpenAI Whisper loaded successfully as fallback")
+            return
+        except ImportError:
+            logger.warning("Whisper not installed. Run: pip install openai-whisper")
+        except Exception as e:
+            logger.warning(f"Whisper failed: {e}")
+        
+        # All fallbacks failed
+        logger.warning("All audio backends failed - audio analysis disabled")
+        self._model = "placeholder"
+        self._processor = None
 
     def transcribe(
         self,
@@ -368,7 +385,9 @@ class QwenAudioModel:
         sample_rate: int,
     ) -> str:
         """
-        Transcribe speech in audio using official chat template API.
+        Transcribe speech in audio.
+        
+        Uses Qwen2-Audio if available, falls back to Whisper.
         
         Args:
             audio: Audio waveform
@@ -382,6 +401,24 @@ class QwenAudioModel:
         if self._model == "placeholder":
             return ""
 
+        # Whisper mode
+        if getattr(self, '_whisper_mode', False):
+            try:
+                import tempfile
+                import soundfile as sf
+                
+                # Whisper expects file input, save temp file
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                    sf.write(f.name, audio, sample_rate)
+                    result = self._model.transcribe(f.name, language="en")
+                    import os
+                    os.unlink(f.name)
+                    return result.get("text", "").strip()
+            except Exception as e:
+                logger.error(f"Whisper transcription failed: {e}")
+                return ""
+
+        # Qwen2-Audio mode
         try:
             # Build conversation in official format
             conversation = [

@@ -392,8 +392,17 @@ class OCRPipeline:
         # Preprocess
         processed = self._preprocess_frame(frame)
 
-        # Run OCR
-        result = self._ocr_engine.ocr(processed, cls=self.config.use_angle_cls)
+        # Run OCR - handle both old and new PaddleOCR APIs
+        try:
+            # New API: predict() without cls argument
+            result = self._ocr_engine.predict(processed)
+        except (TypeError, AttributeError):
+            # Old API: ocr() with cls argument
+            try:
+                result = self._ocr_engine.ocr(processed, cls=self.config.use_angle_cls)
+            except TypeError:
+                # Fallback: ocr() without cls
+                result = self._ocr_engine.ocr(processed)
 
         # Parse results
         detections = self._parse_ocr_result(result, timestamp)
