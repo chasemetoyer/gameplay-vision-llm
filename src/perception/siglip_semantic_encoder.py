@@ -441,18 +441,37 @@ class SigLIPSemanticEncoder:
         """
         Encode a single image to semantic embedding.
         
+        Uses official AutoProcessor for correct preprocessing (handles
+        proper resizing to 384x384 for position embeddings).
+        
         Args:
             image: PIL Image to encode
             
         Returns:
             Embedding tensor of shape (embedding_dim,)
         """
-        tensor, _ = self.region_extractor.prepare_region_tensor(image)
-        tensor = tensor.unsqueeze(0).to(self.config.device, self.config.dtype)
-
-        sequence, pooled = self.encoder(tensor)
-        embedding = self._pool_features(sequence, pooled)
-
+        # Ensure model and processor are loaded
+        self.encoder._load_model()
+        
+        # Check if we have a real processor or placeholder
+        if self.encoder._processor is None:
+            # Placeholder fallback
+            tensor, _ = self.region_extractor.prepare_region_tensor(image)
+            tensor = tensor.unsqueeze(0).to(self.config.device, self.config.dtype)
+            sequence, pooled = self.encoder(tensor)
+            embedding = self._pool_features(sequence, pooled)
+            return embedding.squeeze(0)
+        
+        # Use official processor for proper preprocessing
+        inputs = self.encoder._processor(
+            images=[image],
+            return_tensors="pt"
+        ).to(self.encoder._model.device)
+        
+        with torch.no_grad():
+            # Use get_image_features() with processor outputs
+            embedding = self.encoder._model.get_image_features(**inputs)
+        
         return embedding.squeeze(0)
 
     def encode_masked_regions(
