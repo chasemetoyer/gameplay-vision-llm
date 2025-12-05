@@ -351,6 +351,76 @@ class KnowledgeBaseBuilder:
 
         logger.info("KnowledgeBaseBuilder initialized")
 
+    def update_from_tracking(
+        self,
+        tracked_entities: list[Any],  # TrackedEntity objects (duck typed)
+        frame_idx: int,
+        timestamp: float,
+    ) -> None:
+        """
+        Update knowledge base from SAM tracking results.
+        
+        Args:
+            tracked_entities: List of TrackedEntity objects from SAM module
+            frame_idx: Current frame index
+            timestamp: Current timestamp
+        """
+        active_ids = set()
+        
+        for entity in tracked_entities:
+            # Check if entity has mask in current frame
+            if frame_idx not in entity.frame_masks:
+                continue
+                
+            mask = entity.frame_masks[frame_idx]
+            active_ids.add(entity.entity_id)
+            
+            # Get bounding box/position
+            bbox = None
+            position = None
+            if mask.bbox:
+                # Expecting bbox to provide (x1, y1, x2, y2)
+                # If using internal MaskBbox class, check for to_xyxy or attributes
+                if hasattr(mask.bbox, "to_xyxy"):
+                    bbox_tuple = tuple(mask.bbox.to_xyxy())
+                elif isinstance(mask.bbox, (list, tuple)):
+                    bbox_tuple = tuple(mask.bbox)
+                else:
+                    bbox_tuple = None
+                
+                if bbox_tuple:
+                    bbox = bbox_tuple
+                    # Calculate center
+                    cx = (bbox[0] + bbox[2]) / 2
+                    cy = (bbox[1] + bbox[3]) / 2
+                    position = (cx, cy)
+
+            # Register or update
+            if entity.entity_id not in self._entities:
+                self.register_entity(
+                    entity_id=entity.entity_id,
+                    concept_label=entity.concept_label,
+                    category=EntityCategory.UNKNOWN, # Could map concept to category
+                    timestamp=timestamp,
+                    initial_state=EntityState(
+                        timestamp=timestamp,
+                        position=position,
+                        bbox=bbox,
+                        visible=True
+                    )
+                )
+            else:
+                self.update_entity_state(
+                    entity_id=entity.entity_id,
+                    timestamp=timestamp,
+                    position=position,
+                    bbox=bbox,
+                    visible=True
+                )
+        
+        # Run relationship inference for this timestep
+        self.infer_relationships_at(timestamp)
+
     def register_entity(
         self,
         entity_id: str,

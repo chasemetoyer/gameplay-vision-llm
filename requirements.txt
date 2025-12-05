@@ -50,3 +50,10 @@ scipy                              # Required for mask dilation in SigLIP encode
 # ----------------------------------------------------------------------
 flash-attn                         # Flash Attention 2 for InternVideo2.5 (GPU only, improves performance)
 # salmonn-guard                    # Recommended for mitigating speech-audio composition attacks [B: 71]
+
+# ----------------------------------------------------------------------
+# 7. QWEN3-VL REASONING CORE (Phase 3)
+# Required for the agent orchestration and hybrid retrieval system.
+# ----------------------------------------------------------------------
+qwen-vl-utils>=0.0.14              # Official Qwen-VL utilities for vision processing [B: 82]
+sentence-transformers              # For semantic retrieval embeddings in timeline search [A: 18]

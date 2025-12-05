@@ -60,19 +60,20 @@ class SemanticEmbedding:
 class NaFlexConfig:
     """Configuration for SigLIP 2 NaFlex encoder."""
 
-    # Model settings
-    model_name: str = "google/siglip2-base-patch16-224"
+    # Model settings - Using So400m (Shape Optimized) variant per research doc
+    # Reference: Section 3.2 - "SigLIP 2 So400m (Shape Optimized, embedding dim 1152)"
+    model_name: str = "google/siglip2-so400m-patch14-384"
     device: str = "cuda"
     dtype: torch.dtype = torch.float16
 
-    # NaFlex resolution settings
-    base_resolution: int = 224  # Base image resolution
+    # NaFlex resolution settings - Updated for So400m's 384px base
+    base_resolution: int = 384  # So400m uses 384px patches
     min_resolution: int = 128  # Minimum region size
     max_resolution: int = 768  # Maximum for very large regions
     preserve_aspect_ratio: bool = True  # Core NaFlex feature
 
-    # Embedding settings - SigLIP2-base has 768 hidden dim
-    embedding_dim: int = 768  # SigLIP2-base hidden dim
+    # Embedding settings - SigLIP2-So400m has 1152 hidden dim
+    embedding_dim: int = 1152  # So400m hidden dim (matches projector config)
     use_cls_token: bool = True  # Use CLS token for embedding
     pool_strategy: str = "mean"  # 'cls', 'mean', or 'max' pooling
 
