@@ -136,12 +136,19 @@ class FrameEncoder(nn.Module):
         class PlaceholderEncoder(nn.Module):
             def __init__(self, hidden_dim: int):
                 super().__init__()
-                self.proj = nn.Linear(3 * 224 * 224, hidden_dim)
+                self.hidden_dim = hidden_dim
+                # Use adaptive pooling to handle variable input sizes
+                self.pool = nn.AdaptiveAvgPool2d((8, 8))  # Pool to fixed size
+                self.proj = nn.Linear(3 * 8 * 8, hidden_dim)  # 192 -> hidden_dim
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
                 batch_size, num_frames = x.shape[:2]
-                # Cast to float32 for linear layer compatibility
-                x = x.float().reshape(batch_size * num_frames, -1)
+                # x shape: (batch, frames, C, H, W)
+                # Reshape to (batch*frames, C, H, W) for pooling
+                x = x.float().reshape(batch_size * num_frames, *x.shape[2:])
+                # Apply adaptive pooling to get fixed size
+                x = self.pool(x)  # (batch*frames, C, 8, 8)
+                x = x.reshape(batch_size * num_frames, -1)  # Flatten
                 return self.proj(x).reshape(batch_size, num_frames, -1)
 
         return PlaceholderEncoder(self.config.hidden_dim).to(self.config.device)

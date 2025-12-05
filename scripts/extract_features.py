@@ -243,8 +243,18 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
                     for mask in masks:
                         # Handle both SegmentationMask objects and dict placeholders
                         if isinstance(mask, dict):
-                            confidence = mask.get("confidence", 0)
-                            bbox = mask.get("bbox")
+                            # Placeholder returns 'scores' tensor, not 'confidence'
+                            scores = mask.get("scores")
+                            if scores is not None and len(scores) > 0:
+                                confidence = float(scores[0]) if hasattr(scores, '__getitem__') else float(scores)
+                            else:
+                                confidence = mask.get("confidence", 0)
+                            # Get bbox from 'boxes' tensor
+                            boxes = mask.get("boxes")
+                            if boxes is not None and len(boxes) > 0:
+                                bbox = boxes[0].tolist() if hasattr(boxes[0], 'tolist') else boxes[0]
+                            else:
+                                bbox = mask.get("bbox")
                         else:
                             confidence = mask.confidence
                             bbox = mask.bbox.to_xyxy() if mask.bbox else None
