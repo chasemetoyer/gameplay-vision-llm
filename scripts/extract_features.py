@@ -241,14 +241,22 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
                     
                     # If we found something with high confidence
                     for mask in masks:
-                        if mask.confidence > 0.4:
+                        # Handle both SegmentationMask objects and dict placeholders
+                        if isinstance(mask, dict):
+                            confidence = mask.get("confidence", 0)
+                            bbox = mask.get("bbox")
+                        else:
+                            confidence = mask.confidence
+                            bbox = mask.bbox.to_xyxy() if mask.bbox else None
+                            
+                        if confidence > 0.4:
                             frame_events.append({
                                 "timestamp": timestamp,
                                 "type": "entity_detection",
                                 "description": f"Detected {prompt}",
                                 "entity_type": prompt,
-                                "confidence": mask.confidence,
-                                "bbox": mask.bbox.to_xyxy() if mask.bbox else None,
+                                "confidence": confidence,
+                                "bbox": bbox,
                                 "motion_score": 0.0 # Placeholder
                             })
                             # Only take the best one per prompt to avoid spam
@@ -472,8 +480,11 @@ def build_timeline_with_indexer(
             metadata={"compression_ratio": hico_results.get("compression_ratio", 0)}
         )
     
-    # Get merged and deduplicated timeline
-    timeline_events = indexer.get_all_events()
+    # Merge and deduplicate events
+    indexer.merge_and_dedupe()
+    
+    # Get merged and deduplicated timeline (use internal _events list)
+    timeline_events = sorted(indexer._events, key=lambda e: e.timestamp)
     
     # Convert to simple dict format for JSON serialization
     timeline = []
@@ -504,7 +515,7 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
     - Creates explicit [causes] links for LLM training
     """
     from fusion_indexing.knowledge_base_builder import (
-        KnowledgeBaseBuilder, KnowledgeBaseConfig, RelationType
+        KnowledgeBaseBuilder, KnowledgeBaseConfig, RelationType, EntityCategory
     )
     
     kb = KnowledgeBaseBuilder(KnowledgeBaseConfig())
@@ -520,11 +531,16 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
         content = event["content"]
         evt_type = event["type"]
         
+        # Create unique entity ID
+        entity_id = f"{evt_type}_{timestamp:.1f}".replace(".", "_")
+        
         # Add entities based on event type
         if evt_type == "ocr":
-            entity_id = kb.add_entity(
-                name=f"OCR_{timestamp:.1f}",
-                entity_type="text_event",
+            entity = kb.register_entity(
+                entity_id=entity_id,
+                concept_label=f"OCR_{timestamp:.1f}",
+                category=EntityCategory.UI_ELEMENT,
+                timestamp=timestamp,
                 attributes={"text": content, "timestamp": timestamp}
             )
             
@@ -538,9 +554,11 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
                 damage_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content, "type": "damage_text"})
                 
         elif evt_type == "visual":
-            entity_id = kb.add_entity(
-                name=f"Visual_{timestamp:.1f}",
-                entity_type="visual_event",
+            entity = kb.register_entity(
+                entity_id=entity_id,
+                concept_label=f"Visual_{timestamp:.1f}",
+                category=EntityCategory.EFFECT,
+                timestamp=timestamp,
                 attributes={"description": content, "timestamp": timestamp}
             )
             
@@ -549,9 +567,11 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
                 damage_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content, "type": "combat_visual"})
                 
         elif evt_type == "speech" or evt_type == "audio":
-            entity_id = kb.add_entity(
-                name=f"Audio_{timestamp:.1f}",
-                entity_type="audio_event",
+            entity = kb.register_entity(
+                entity_id=entity_id,
+                concept_label=f"Audio_{timestamp:.1f}",
+                category=EntityCategory.EFFECT,
+                timestamp=timestamp,
                 attributes={"text": content, "timestamp": timestamp}
             )
             
@@ -591,14 +611,14 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
                         source_id=damage["entity_id"],
                         target_id=death["entity_id"],
                         relation_type=RelationType.DESTROYS,
-                        start_time=damage_time,
+                        timestamp=damage_time,
                         end_time=death_time,
                         metadata={"causal_inference": True, "confidence": 0.8}
                     )
                 except Exception:
                     pass  # Relationship might fail if entities don't exist
     
-    logger.info(f"Knowledge Base: {len(kb.entities)} entities, {len(causal_links)} causal links inferred")
+    logger.info(f"Knowledge Base: {len(kb._entities)} entities, {len(causal_links)} causal links inferred")
     
     return kb, causal_links
 
@@ -674,13 +694,13 @@ def format_for_gpt(timeline: list[dict], kb, causal_links: list[dict], video_nam
     
     # Export KB entities
     entity_count = 0
-    for entity_id, entity in kb.entities.items():
+    for entity_id, entity in kb._entities.items():
         entity_count += 1
-        lines.append(f"### {entity.name} ({entity.entity_type})")
+        lines.append(f"### {entity.concept_label} ({entity.category.value})")
         for k, v in entity.attributes.items():
             lines.append(f"  - {k}: {v}")
         if entity_count >= 50:  # Limit to avoid huge files
-            lines.append(f"\n... and {len(kb.entities) - 50} more entities")
+            lines.append(f"\n... and {len(kb._entities) - 50} more entities")
             break
     
     # 4. Visual Regions Section (placeholder for SAM3 masks)
