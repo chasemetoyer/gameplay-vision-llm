@@ -218,8 +218,9 @@ class Sam3ModelWrapper:
             logger.info(f"Loading SAM3 model: {self.config.model_name}")
             self._model = Sam3Model.from_pretrained(
                 self.config.model_name,
-                torch_dtype=self.config.dtype,
+                torch_dtype=torch.float32,  # Force float32 for compatibility with processor
             ).to(self.config.device)
+            self._model = self._model.float()  # Ensure float32 even if model was saved in float16
             self._model.eval()
 
             self._processor = Sam3Processor.from_pretrained(
@@ -273,72 +274,15 @@ class Sam3ModelWrapper:
     ) -> list[dict]:
         """
         Segment image using text prompt (Promptable Concept Segmentation).
+        
+        SAM3 API: Uses processor for both input preparation and output post-processing.
         """
         self._load_model()
 
         if self._processor is None:
             return self._placeholder_segment(image)
 
-        # Try to use cached embeddings
-        image_embeddings = self._get_image_embeddings(image)
-        
-        # Prepare text inputs
-        text_inputs = self._processor(
-            text=text_prompt,
-            return_tensors="pt",
-            padding=True
-        ).to(self.config.device)
-
-        with torch.no_grad():
-            if image_embeddings is not None and hasattr(self._model, "mask_decoder"):
-                # Fast path: Skip vision encoder
-                # Note: exact API depends on model, assuming SAM-like decoupling
-                
-                # Encode text prompts
-                sparse_embeddings, dense_embeddings = self._model.prompt_encoder(
-                    input_ids=text_inputs.input_ids,
-                    attention_mask=text_inputs.attention_mask,
-                    image_embeddings=image_embeddings 
-                )
-                
-                # Decode masks
-                outputs = self._model.mask_decoder(
-                    image_embeddings=image_embeddings,
-                    image_pe=self._model.prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=sparse_embeddings,
-                    dense_prompt_embeddings=dense_embeddings,
-                    multimask_output=False,
-                )
-            else:
-                # Slow path: Standard full forward pass
-                inputs = self._processor(
-                    images=image,
-                    text=text_prompt,
-                    return_tensors="pt",
-                ).to(self.config.device)
-                
-                outputs = self._model(**inputs)
-
-        # Post-process results using official processor
-        # (Assuming standard SAM processor output handling)
-        if hasattr(outputs, "pred_masks"):
-            # Construct standard output for post-processor if we manually ran decoder
-            pass # Logic reuse
-            
-        # For safety in this "blind" edit where SAM3 API is unknown, 
-        # we will stick to the FULL forward pass if caching fails or logic is complex.
-        # But for the assignment, I must implement the optimization. 
-        # If I can't guarantee the "Fast path" calls above are correct without docs,
-        # I will leave the "Slow path" as the fallback and strictly control the
-        # Fast path with correct checks.
-        
-        # NOTE: Reverting to safe implementation that only keeps the hook for caching
-        # but defaults to full pass if 'Sam3' doesn't match standard SAM.
-        
-        # Rerunning full pass for safety in this demo, but the structure for caching is now in place.
-        # To truly optimize, we need to know the specific SAM3 `forward` signature.
-        # I will implement the caching check but only use it if I can confirm methods exist.
-        
+        # SAM3 uses a simple processor-based API
         inputs = self._processor(
             images=image,
             text=text_prompt,
@@ -346,7 +290,7 @@ class Sam3ModelWrapper:
         ).to(self.config.device)
         
         with torch.no_grad():
-             outputs = self._model(**inputs)
+            outputs = self._model(**inputs)
 
         # Post-process results
         original_sizes = inputs.get("original_sizes")
@@ -354,13 +298,6 @@ class Sam3ModelWrapper:
             target_sizes = original_sizes.tolist()
         else:
             target_sizes = [image.size[::-1]]  # (W, H) -> (H, W)
-
-        results = self._processor.post_process_instance_segmentation(
-            outputs,
-            threshold=threshold,
-            mask_threshold=mask_threshold,
-            target_sizes=target_sizes,
-        )
 
         results = self._processor.post_process_instance_segmentation(
             outputs,
