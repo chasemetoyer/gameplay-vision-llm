@@ -241,10 +241,15 @@ class OCRPipeline:
             from paddleocr import PaddleOCR
 
             logger.info("Loading PaddleOCR engine (PP-OCRv4)")
-            # Use minimal params for compatibility across versions
+            # Use full params now that we have compatible versions
             self._ocr_engine = PaddleOCR(
-                lang=self.config.lang,
                 use_angle_cls=self.config.use_angle_cls,
+                lang=self.config.lang,
+                use_gpu=self.config.use_gpu,
+                det_model_dir=self.config.det_model_dir,
+                rec_model_dir=self.config.rec_model_dir,
+                det_db_thresh=self.config.det_db_thresh,
+                det_db_box_thresh=self.config.det_db_box_thresh,
             )
             logger.info("PaddleOCR engine loaded successfully")
         except ImportError as e:

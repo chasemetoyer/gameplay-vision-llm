@@ -91,13 +91,13 @@ def run_siglip_encoder(frames: list[tuple[float, Image.Image]], device: str = "c
     return embeddings
 
 
-def run_ocr(frames: list[tuple[float, Image.Image]]):
+def run_ocr(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
     """Run PaddleOCR on frames to extract text."""
     try:
         from perception.ocr_pipeline import OCRPipeline, OCRConfig
         import numpy as np
         
-        config = OCRConfig()
+        config = OCRConfig(use_gpu=(device == "cuda"))
         ocr = OCRPipeline(config)
         
         results = []
@@ -280,7 +280,7 @@ def main():
     
     # Step 3: Run OCR
     logger.info("Step 3: Running OCR...")
-    ocr_results = run_ocr(frames)
+    ocr_results = run_ocr(frames, device=args.device)
     
     # Step 4: Build timeline
     logger.info("Step 4: Building timeline...")
