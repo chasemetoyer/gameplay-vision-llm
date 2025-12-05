@@ -220,13 +220,13 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
     Run SAM 3 Concept Segmentation to detect specific game entities.
     """
     try:
-        from perception.sam_concept_segmenter import SamConceptSegmenter, SAMConfig
+        from perception.sam_concept_segmenter import Sam3ModelWrapper, SAMConfig
         
         # Default prompts for gameplay
         prompts = ["character", "enemy", "boss", "health bar", "weapon"]
         
         config = SAMConfig(device=device)
-        segmenter = SamConceptSegmenter(config)
+        segmenter = Sam3ModelWrapper(config)
         
         results = []
         logger.info(f"Loading SAM 3 model on {device}...")
@@ -236,7 +236,8 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
                 # Run segmentation for each prompt
                 frame_events = []
                 for prompt in prompts:
-                    masks = segmenter.segment_frame(frame, idx, prompt)
+                    # Use segment_with_text which is the correct API
+                    masks = segmenter.segment_with_text(frame, prompt)
                     
                     # If we found something with high confidence
                     for mask in masks:

@@ -140,8 +140,8 @@ class FrameEncoder(nn.Module):
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
                 batch_size, num_frames = x.shape[:2]
-                x = x.view(batch_size * num_frames, -1)
-                return self.proj(x).view(batch_size, num_frames, -1)
+                x = x.reshape(batch_size * num_frames, -1)
+                return self.proj(x).reshape(batch_size, num_frames, -1)
 
         return PlaceholderEncoder(self.config.hidden_dim).to(self.config.device)
 
