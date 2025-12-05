@@ -492,6 +492,10 @@ class QwenAudioModel:
 
         if self._model == "placeholder":
             return "No audio events detected."
+        
+        # Whisper only does transcription, not event analysis
+        if getattr(self, '_whisper_mode', False):
+            return "Audio event analysis not available (using Whisper for transcription only)"
 
         prompt = prompt or self.config.event_detection_prompt
 
