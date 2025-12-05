@@ -129,7 +129,72 @@ def run_ocr(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
         return []
 
 
-def run_visual_detection(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
+def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
+    """
+    Run SAM 3 Concept Segmentation to detect specific game entities.
+    """
+    try:
+        from perception.sam_concept_segmenter import SamConceptSegmenter, SAMConfig
+        
+        # Default prompts for gameplay
+        prompts = ["character", "enemy", "boss", "health bar", "weapon"]
+        
+        config = SAMConfig(device=device)
+        segmenter = SamConceptSegmenter(config)
+        
+        results = []
+        logger.info(f"Loading SAM 3 model on {device}...")
+        
+        for idx, (timestamp, frame) in enumerate(frames):
+            try:
+                # Run segmentation for each prompt
+                frame_events = []
+                for prompt in prompts:
+                    masks = segmenter.segment_frame(frame, idx, prompt)
+                    
+                    # If we found something with high confidence
+                    for mask in masks:
+                        if mask.confidence > 0.4:
+                            frame_events.append({
+                                "timestamp": timestamp,
+                                "type": "entity_detection",
+                                "description": f"Detected {prompt}",
+                                "entity_type": prompt,
+                                "confidence": mask.confidence,
+                                "bbox": mask.bbox.to_xyxy() if mask.bbox else None,
+                                "motion_score": 0.0 # Placeholder
+                            })
+                            # Only take the best one per prompt to avoid spam
+                            break
+                
+                results.extend(frame_events)
+                
+                if idx % 10 == 0:
+                    logger.info(f"SAM processed frame {idx}/{len(frames)}")
+                    
+            except Exception as e:
+                logger.warning(f"SAM failed at {timestamp:.1f}s: {e}")
+                
+        logger.info(f"SAM detected {len(results)} entity events")
+        return results
+        
+    except ImportError as e:
+        logger.warning(f"SAM dependencies not met: {e}")
+        return []
+    except Exception as e:
+        logger.warning(f"SAM initialization failed: {e}")
+        return []
+
+
+def run_visual_detection(frames: list[tuple[float, Image.Image]], device: str = "cuda", use_sam: bool = False):
+    """
+    Run visual analysis. Uses SAM 3 if requested, otherwise falls back to motion detection.
+    """
+    if use_sam:
+        logger.info("Using SAM 3 for advanced entity detection...")
+        return run_sam_detection(frames, device)
+        
+    logger.info("Using basic motion detection (fast mode)...")
     """
     Simple visual analysis using frame differencing and region detection.
     
@@ -223,9 +288,9 @@ def build_timeline(
 
 def build_knowledge_base(timeline: list[dict], video_name: str):
     """Build the entity knowledge base from timeline events."""
-    from fusion_indexing.knowledge_base_builder import KnowledgeBaseBuilder, KBConfig
+    from fusion_indexing.knowledge_base_builder import KnowledgeBaseBuilder, KnowledgeBaseConfig
     
-    kb = KnowledgeBaseBuilder(KBConfig())
+    kb = KnowledgeBaseBuilder(KnowledgeBaseConfig())
     
     # Process timeline events into KB
     for event in timeline:
@@ -306,6 +371,7 @@ def main():
     parser.add_argument("--output", default="data/outputs", help="Output directory")
     parser.add_argument("--fps", type=float, default=1.0, help="Frames per second to sample")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
+    parser.add_argument("--use-sam", action="store_true", help="Use SAM 3 for advanced entity detection")
     args = parser.parse_args()
     
     # Validate inputs
@@ -322,24 +388,28 @@ def main():
     logger.info("Step 1: Extracting frames...")
     frames = extract_frames(args.video, fps=args.fps)
     
-    # Step 2: Run visual motion detection
+    # Step 2: Run visual detection (SAM or Motion)
     logger.info("Step 2: Running visual detection...")
-    visual_results = run_visual_detection(frames, device=args.device)
+    visual_results = run_visual_detection(frames, device=args.device, use_sam=args.use_sam)
     
     # Step 3: Run OCR
     logger.info("Step 3: Running OCR...")
     ocr_results = run_ocr(frames, device=args.device)
     
-    # Step 4: Build timeline
-    logger.info("Step 4: Building timeline...")
-    timeline = build_timeline(frames, ocr_results, visual_results)
+    # Step 4: Run SigLIP (Semantic Embeddings)
+    logger.info("Step 4: Running SigLIP Encoder...")
+    siglip_results = run_siglip_encoder(frames, device=args.device)
     
-    # Step 5: Build Knowledge Base
-    logger.info("Step 5: Building Knowledge Base...")
+    # Step 5: Build timeline
+    logger.info("Step 5: Building timeline...")
+    timeline = build_timeline(frames, ocr_results, visual_results, siglip_results)
+    
+    # Step 6: Build Knowledge Base
+    logger.info("Step 6: Building Knowledge Base...")
     kb = build_knowledge_base(timeline, video_name)
     
-    # Step 6: Save outputs
-    logger.info("Step 6: Saving outputs...")
+    # Step 7: Save outputs
+    logger.info("Step 7: Saving outputs...")
     
     # Save raw JSON
     output_json = os.path.join(args.output, f"{video_name}_features.json")
@@ -351,6 +421,10 @@ def main():
             "timeline": timeline,
             "visual_events": visual_results,
             "ocr_results": ocr_results,
+            "siglip_embeddings": [
+                {"timestamp": s["timestamp"], "shape": s["embedding_shape"]} 
+                for s in siglip_results
+            ]
         }, f, indent=2)
     logger.info(f"Saved: {output_json}")
     
