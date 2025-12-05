@@ -206,13 +206,19 @@ class SigLIPEncoder(nn.Module):
         """Create placeholder encoder for development."""
 
         class Placeholder(nn.Module):
-            def __init__(self, dim):
+            def __init__(self, dim, device):
                 super().__init__()
                 self.proj = nn.Sequential(
                     nn.Flatten(),
                     nn.LazyLinear(dim),
                 )
                 self.dim = dim
+                self._device = device
+
+            @property
+            def device(self):
+                """Return the device this model is on."""
+                return self._device
 
             def forward(self, x):
                 batch_size = x.shape[0]
@@ -225,10 +231,10 @@ class SigLIPEncoder(nn.Module):
                 """Placeholder for get_image_features method."""
                 pixel_values = kwargs.get("pixel_values")
                 if pixel_values is None:
-                    return torch.zeros(1, self.dim)
+                    return torch.zeros(1, self.dim, device=self._device)
                 return self.forward(pixel_values)
 
-        return Placeholder(self.config.embedding_dim).to(self.config.device)
+        return Placeholder(self.config.embedding_dim, self.config.device).to(self.config.device)
 
     def forward(
         self,
