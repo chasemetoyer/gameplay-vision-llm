@@ -36,6 +36,189 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Entity Tracking (VideoRAG: Cross-frame entity persistence)
+# =============================================================================
+
+class TrackedEntity:
+    """Represents an entity tracked across multiple frames."""
+    
+    def __init__(self, entity_id: str, entity_type: str, first_timestamp: float, bbox: list):
+        self.entity_id = entity_id
+        self.entity_type = entity_type
+        self.first_seen = first_timestamp
+        self.last_seen = first_timestamp
+        self.trajectory = [(first_timestamp, bbox)]  # List of (timestamp, bbox)
+        self.states = [(first_timestamp, "appeared")]
+        self.confidence_history = []
+        self.embedding = None  # Will be set by SigLIP
+        
+    def update(self, timestamp: float, bbox: list, confidence: float = 1.0):
+        """Update entity with new detection."""
+        self.last_seen = timestamp
+        self.trajectory.append((timestamp, bbox))
+        self.confidence_history.append(confidence)
+        
+    def mark_state(self, timestamp: float, state: str):
+        """Mark a state change (e.g., 'stunned', 'defeated')."""
+        self.states.append((timestamp, state))
+        
+    def to_knowledge_entry(self) -> dict:
+        """Convert to knowledge base entry format."""
+        return {
+            "entity_id": self.entity_id,
+            "entity_type": self.entity_type,
+            "first_seen": self.first_seen,
+            "last_seen": self.last_seen,
+            "duration": self.last_seen - self.first_seen,
+            "trajectory_length": len(self.trajectory),
+            "states": self.states,
+            "avg_confidence": sum(self.confidence_history) / len(self.confidence_history) if self.confidence_history else 1.0,
+        }
+        
+    def to_timeline_text(self) -> str:
+        """Generate readable timeline text."""
+        minutes_first = int(self.first_seen // 60)
+        seconds_first = int(self.first_seen % 60)
+        minutes_last = int(self.last_seen // 60)
+        seconds_last = int(self.last_seen % 60)
+        
+        state_changes = " → ".join([f"{s}" for _, s in self.states])
+        return f"{self.entity_type.title()} ({self.entity_id}): [{minutes_first:02d}:{seconds_first:02d}] to [{minutes_last:02d}:{seconds_last:02d}] | {state_changes}"
+
+
+class EntityTracker:
+    """
+    Tracks entities across frames using IoU (Intersection over Union) matching.
+    
+    Implements VideoRAG Strategy A: Entity-Centric Knowledge Base Construction.
+    """
+    
+    def __init__(self, iou_threshold: float = 0.3, max_frames_missing: int = 10):
+        self.iou_threshold = iou_threshold
+        self.max_frames_missing = max_frames_missing
+        self.entities: dict[str, TrackedEntity] = {}
+        self.entity_counter = {}  # Per-type counters
+        self._last_frame_entities = {}  # entity_id -> (timestamp, bbox)
+        self._frames_since_seen = {}  # entity_id -> frame count
+        
+    def _compute_iou(self, box1: list, box2: list) -> float:
+        """Compute IoU between two bboxes [x1, y1, x2, y2]."""
+        if box1 is None or box2 is None:
+            return 0.0
+        
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+            
+        intersection = (x2 - x1) * (y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union = area1 + area2 - intersection
+        
+        return intersection / union if union > 0 else 0.0
+    
+    def _generate_id(self, entity_type: str) -> str:
+        """Generate unique entity ID."""
+        if entity_type not in self.entity_counter:
+            self.entity_counter[entity_type] = 0
+        self.entity_counter[entity_type] += 1
+        return f"{entity_type}_{self.entity_counter[entity_type]:03d}"
+    
+    def update(self, timestamp: float, detections: list[dict]) -> list[dict]:
+        """
+        Process detections for a frame and update entity tracking.
+        
+        Args:
+            timestamp: Current frame timestamp
+            detections: List of {"entity_type", "bbox", "confidence", ...}
+            
+        Returns:
+            Enriched detections with entity_id
+        """
+        # Increment frames since seen for all tracked entities
+        for eid in list(self._frames_since_seen.keys()):
+            self._frames_since_seen[eid] += 1
+            
+        enriched = []
+        matched_entity_ids = set()
+        
+        for det in detections:
+            entity_type = det.get("entity_type", "unknown")
+            bbox = det.get("bbox")
+            confidence = det.get("confidence", 1.0)
+            
+            # Find best matching existing entity of same type
+            best_match_id = None
+            best_iou = self.iou_threshold
+            
+            for eid, entity in self.entities.items():
+                if entity.entity_type != entity_type:
+                    continue
+                if eid in matched_entity_ids:
+                    continue
+                    
+                # Get last known position
+                if eid in self._last_frame_entities:
+                    _, last_bbox = self._last_frame_entities[eid]
+                    iou = self._compute_iou(bbox, last_bbox)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_match_id = eid
+            
+            if best_match_id:
+                # Update existing entity
+                self.entities[best_match_id].update(timestamp, bbox, confidence)
+                entity_id = best_match_id
+                matched_entity_ids.add(entity_id)
+                self._frames_since_seen[entity_id] = 0
+            else:
+                # Create new entity
+                entity_id = self._generate_id(entity_type)
+                self.entities[entity_id] = TrackedEntity(
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    first_timestamp=timestamp,
+                    bbox=bbox
+                )
+                self._frames_since_seen[entity_id] = 0
+                matched_entity_ids.add(entity_id)
+            
+            # Update last known position
+            self._last_frame_entities[entity_id] = (timestamp, bbox)
+            
+            # Enrich detection with entity_id
+            enriched_det = det.copy()
+            enriched_det["entity_id"] = entity_id
+            enriched.append(enriched_det)
+        
+        # Mark entities as disappeared if not seen for too long
+        for eid in list(self._frames_since_seen.keys()):
+            if self._frames_since_seen[eid] > self.max_frames_missing:
+                if eid in self.entities:
+                    self.entities[eid].mark_state(timestamp, "disappeared")
+                del self._frames_since_seen[eid]
+                if eid in self._last_frame_entities:
+                    del self._last_frame_entities[eid]
+        
+        return enriched
+    
+    def get_all_entities(self) -> list[TrackedEntity]:
+        """Get all tracked entities."""
+        return list(self.entities.values())
+    
+    def get_entity_summary(self) -> str:
+        """Generate summary of all tracked entities."""
+        lines = ["## Tracked Entities", ""]
+        for entity in sorted(self.entities.values(), key=lambda e: e.first_seen):
+            lines.append(f"- {entity.to_timeline_text()}")
+        return "\n".join(lines)
+
+
+# =============================================================================
 # Frame Extraction
 # =============================================================================
 
@@ -217,7 +400,9 @@ def run_ocr(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
 
 def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
     """
-    Run SAM 3 Concept Segmentation to detect specific game entities.
+    Run SAM 3 Concept Segmentation with entity tracking across frames.
+    
+    Returns both per-frame detections and the tracker for entity summaries.
     """
     try:
         from perception.sam_concept_segmenter import Sam3ModelWrapper, SAMConfig
@@ -228,13 +413,16 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
         config = SAMConfig(device=device)
         segmenter = Sam3ModelWrapper(config)
         
+        # Initialize entity tracker for cross-frame persistence
+        tracker = EntityTracker(iou_threshold=0.3, max_frames_missing=5)
+        
         results = []
         logger.info(f"Loading SAM 3 model on {device}...")
         
         for idx, (timestamp, frame) in enumerate(frames):
             try:
                 # Run segmentation for each prompt
-                frame_events = []
+                frame_detections = []
                 for prompt in prompts:
                     # Use segment_with_text which is the correct API
                     masks = segmenter.segment_with_text(frame, prompt)
@@ -260,28 +448,34 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
                             bbox = mask.bbox.to_xyxy() if mask.bbox else None
                             
                         if confidence > 0.4:
-                            frame_events.append({
+                            frame_detections.append({
                                 "timestamp": timestamp,
                                 "type": "entity_detection",
                                 "description": f"Detected {prompt}",
                                 "entity_type": prompt,
                                 "confidence": confidence,
                                 "bbox": bbox,
-                                "motion_score": 0.0 # Placeholder
+                                "motion_score": 0.0
                             })
                             # Only take the best one per prompt to avoid spam
                             break
                 
-                results.extend(frame_events)
+                # Update tracker with this frame's detections (adds entity_id)
+                tracked_detections = tracker.update(timestamp, frame_detections)
+                results.extend(tracked_detections)
                 
                 if idx % 10 == 0:
                     logger.info(f"SAM processed frame {idx}/{len(frames)}")
                     
             except Exception as e:
                 logger.warning(f"SAM failed at {timestamp:.1f}s: {e}")
-                
-        logger.info(f"SAM detected {len(results)} entity events")
-        return results
+        
+        # Log entity tracking summary
+        unique_entities = len(tracker.entities)
+        logger.info(f"SAM detected {len(results)} events across {unique_entities} unique entities")
+        logger.info(f"Entity tracking summary:\n{tracker.get_entity_summary()}")
+        
+        return results, tracker
         
     except ImportError as e:
         logger.warning(f"SAM dependencies not met: {e}")
@@ -294,10 +488,17 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
 def run_visual_detection(frames: list[tuple[float, Image.Image]], device: str = "cuda", use_sam: bool = False):
     """
     Run visual analysis. Uses SAM 3 if requested, otherwise falls back to motion detection.
+    
+    Returns: (detections, tracker) where tracker is None for motion detection
     """
     if use_sam:
         logger.info("Using SAM 3 for advanced entity detection...")
-        return run_sam_detection(frames, device)
+        result = run_sam_detection(frames, device)
+        # Handle both success (results, tracker) and fallback (empty list)
+        if isinstance(result, tuple):
+            return result
+        else:
+            return result, None
         
     logger.info("Using basic motion detection (fast mode)...")
     """
@@ -351,7 +552,7 @@ def run_visual_detection(frames: list[tuple[float, Image.Image]], device: str = 
         prev_frame_np = frame_np
     
     logger.info(f"Visual detection: {len(results)} motion events")
-    return results
+    return results, None  # No tracker for motion detection
 
 
 # =============================================================================
@@ -836,7 +1037,7 @@ def main():
     
     # Step 3: Run visual detection (SAM or Motion)
     logger.info("Step 3/8: Running visual detection...")
-    visual_results = run_visual_detection(frames, device=args.device, use_sam=args.use_sam)
+    visual_results, entity_tracker = run_visual_detection(frames, device=args.device, use_sam=args.use_sam)
     
     # Step 4: Run OCR
     logger.info("Step 4/8: Running OCR...")
