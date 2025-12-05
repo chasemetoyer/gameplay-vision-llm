@@ -303,6 +303,7 @@ class QwenAudioModel:
         if self._model is not None:
             return
 
+        # Try official Qwen2AudioForConditionalGeneration first
         try:
             from transformers import Qwen2AudioForConditionalGeneration, AutoProcessor
 
@@ -326,14 +327,38 @@ class QwenAudioModel:
                 self.config.sample_rate = self._processor.feature_extractor.sampling_rate
                 
             logger.info("Qwen2-Audio loaded successfully")
+            return
         except ImportError:
-            logger.warning("Qwen2AudioForConditionalGeneration not available.")
-            logger.warning("Please update transformers: pip install -U transformers")
-            self._model = "placeholder"
-            self._processor = None
+            logger.info("Qwen2AudioForConditionalGeneration not found, trying AutoModel fallback...")
+        except Exception as e:
+            logger.info(f"Qwen2AudioForConditionalGeneration failed: {e}, trying fallback...")
+        
+        # Fallback: Use AutoModelForCausalLM with trust_remote_code
+        try:
+            from transformers import AutoModelForCausalLM, AutoProcessor
+            
+            logger.info(f"Loading Qwen2-Audio with AutoModel fallback: {self.config.model_name}")
+            self._processor = AutoProcessor.from_pretrained(
+                self.config.model_name,
+                trust_remote_code=True,
+            )
+            
+            self._model = AutoModelForCausalLM.from_pretrained(
+                self.config.model_name,
+                torch_dtype=self.config.dtype,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+            self._model.eval()
+            
+            if hasattr(self._processor, 'feature_extractor'):
+                self.config.sample_rate = self._processor.feature_extractor.sampling_rate
+                
+            logger.info("Qwen2-Audio loaded successfully (via AutoModel)")
+            return
         except Exception as e:
             logger.warning(f"Failed to load Qwen2-Audio: {e}")
-            logger.warning("Using placeholder model")
+            logger.warning("Using placeholder model - audio analysis disabled")
             self._model = "placeholder"
             self._processor = None
 

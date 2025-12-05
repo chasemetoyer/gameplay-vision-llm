@@ -532,8 +532,17 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
     
     # Track potential cause-effect patterns
     causal_links = []
-    damage_events = []  # Events that might cause damage
-    death_events = []   # Events indicating player/entity death
+    attack_events = []   # Events indicating attacks/actions
+    effect_events = []   # Events indicating effects/results
+    
+    # Pattern definitions for gameplay causal detection
+    ATTACK_PATTERNS = ["attacks", "casts a spell", "strikes", "parry", "dodge", 
+                       "performs", "uses", "summons", "charges"]
+    EFFECT_PATTERNS = ["damage", "hit", "critical", "wounds", "burns", 
+                       "perfect", "broken", "stunned", "enraged", "defeated"]
+    VICTORY_PATTERNS = ["victory", "battle loot", "xp", "defeated the"]
+    SKILL_PATTERNS = ["stains", "overcharge", "immolation", "healing", 
+                      "recovery", "assault", "thunderfall"]
     
     # Process timeline events into KB
     for event in timeline:
@@ -554,14 +563,43 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
                 attributes={"text": content, "timestamp": timestamp}
             )
             
-            # Detect death/game over screens
             content_lower = content.lower()
-            if any(word in content_lower for word in ["died", "death", "game over", "you died", "defeated"]):
-                death_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content})
             
-            # Detect damage indicators
-            if any(word in content_lower for word in ["damage", "hit", "critical", "-hp", "health"]):
-                damage_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content, "type": "damage_text"})
+            # Detect attack/action events
+            if any(pattern in content_lower for pattern in ATTACK_PATTERNS):
+                attack_events.append({
+                    "timestamp": timestamp, 
+                    "entity_id": entity_id, 
+                    "content": content, 
+                    "type": "attack"
+                })
+            
+            # Detect skill usage
+            if any(pattern in content_lower for pattern in SKILL_PATTERNS):
+                attack_events.append({
+                    "timestamp": timestamp, 
+                    "entity_id": entity_id, 
+                    "content": content, 
+                    "type": "skill"
+                })
+            
+            # Detect effect/result events
+            if any(pattern in content_lower for pattern in EFFECT_PATTERNS):
+                effect_events.append({
+                    "timestamp": timestamp, 
+                    "entity_id": entity_id, 
+                    "content": content,
+                    "type": "effect"
+                })
+            
+            # Detect victory (special effect)
+            if any(pattern in content_lower for pattern in VICTORY_PATTERNS):
+                effect_events.append({
+                    "timestamp": timestamp, 
+                    "entity_id": entity_id, 
+                    "content": content,
+                    "type": "victory"
+                })
                 
         elif evt_type == "visual":
             entity = kb.register_entity(
@@ -572,9 +610,15 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
                 attributes={"description": content, "timestamp": timestamp}
             )
             
-            # High action might indicate attacks
-            if "combat" in content.lower() or "intense" in content.lower():
-                damage_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content, "type": "combat_visual"})
+            # Visual combat detection
+            content_lower = content.lower()
+            if any(word in content_lower for word in ["combat", "attack", "weapon"]):
+                attack_events.append({
+                    "timestamp": timestamp, 
+                    "entity_id": entity_id, 
+                    "content": content, 
+                    "type": "combat_visual"
+                })
                 
         elif evt_type == "speech" or evt_type == "audio":
             entity = kb.register_entity(
@@ -584,46 +628,41 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
                 timestamp=timestamp,
                 attributes={"text": content, "timestamp": timestamp}
             )
-            
-            # Detect audio cues for attacks/deaths
-            content_lower = content.lower()
-            if any(word in content_lower for word in ["die", "death", "killed", "defeated"]):
-                death_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content})
-            if any(word in content_lower for word in ["attack", "strike", "hit", "smash"]):
-                damage_events.append({"timestamp": timestamp, "entity_id": entity_id, "content": content, "type": "attack_audio"})
     
-    # Infer causal links: Find damage events that precede death events
-    CAUSAL_WINDOW = 3.0  # seconds - events within this window may be causally linked
+    # Infer causal links: Find attacks that precede effects
+    CAUSAL_WINDOW = 5.0  # seconds - events within this window may be causally linked
     
-    for death in death_events:
-        death_time = death["timestamp"]
+    for effect in effect_events:
+        effect_time = effect["timestamp"]
         
-        # Find potential causes (damage events shortly before death)
-        for damage in damage_events:
-            damage_time = damage["timestamp"]
+        # Find potential causes (attack events shortly before effect)
+        for attack in attack_events:
+            attack_time = attack["timestamp"]
             
-            # Check if damage happened within causal window before death
-            if 0 < (death_time - damage_time) <= CAUSAL_WINDOW:
+            # Check if attack happened within causal window before effect
+            if 0 < (effect_time - attack_time) <= CAUSAL_WINDOW:
                 causal_link = {
-                    "cause_timestamp": damage_time,
-                    "cause_event": damage["content"],
-                    "cause_type": damage["type"],
-                    "effect_timestamp": death_time,
-                    "effect_event": death["content"],
-                    "time_delta": death_time - damage_time,
-                    "formatted": f"({damage_time:.1f}s) {damage['content']} [causes] ({death_time:.1f}s) {death['content']}"
+                    "cause_timestamp": attack_time,
+                    "cause_event": attack["content"],
+                    "cause_type": attack["type"],
+                    "effect_timestamp": effect_time,
+                    "effect_event": effect["content"],
+                    "effect_type": effect["type"],
+                    "time_delta": effect_time - attack_time,
+                    "formatted": f"[{attack_time:.1f}s] {attack['content'][:50]}... → [{effect_time:.1f}s] {effect['content'][:50]}..."
                 }
                 causal_links.append(causal_link)
                 
                 # Also add relationship to KB
                 try:
+                    relation = RelationType.DESTROYS if effect["type"] == "victory" else RelationType.INTERACTS
                     kb.add_relationship(
-                        source_id=damage["entity_id"],
-                        target_id=death["entity_id"],
-                        relation_type=RelationType.DESTROYS,
-                        timestamp=damage_time,
-                        end_time=death_time,
-                        metadata={"causal_inference": True, "confidence": 0.8}
+                        source_id=attack["entity_id"],
+                        target_id=effect["entity_id"],
+                        relation_type=relation,
+                        timestamp=attack_time,
+                        end_time=effect_time,
+                        metadata={"causal_inference": True, "confidence": 0.7}
                     )
                 except Exception:
                     pass  # Relationship might fail if entities don't exist
@@ -637,7 +676,7 @@ def build_knowledge_base_with_causality(timeline: list[dict], video_name: str):
 # GPT-Ready Text Formatting
 # =============================================================================
 
-def format_for_gpt(timeline: list[dict], kb, causal_links: list[dict], video_name: str) -> str:
+def format_for_gpt(timeline: list[dict], kb, causal_links: list[dict], visual_results: list[dict], video_name: str) -> str:
     """
     Format timeline, KB, and causal links as text context for GPT-4 Q&A generation.
     
@@ -713,13 +752,46 @@ def format_for_gpt(timeline: list[dict], kb, causal_links: list[dict], video_nam
             lines.append(f"\n... and {len(kb._entities) - 50} more entities")
             break
     
-    # 4. Visual Regions Section (placeholder for SAM3 masks)
+    # 4. Visual Regions Section (SAM3 entity detection with bboxes)
     lines.extend([
         "",
         "## Visual Regions",
-        "(Detected entities with bounding boxes - to be populated by SAM3)",
+        "(Detected entities with bounding boxes from SAM3)",
         ""
     ])
+    
+    # Group visual results by timestamp for readability
+    visual_by_time = {}
+    for vis in visual_results:
+        ts = vis.get("timestamp", 0)
+        ts_key = f"{ts:.1f}"
+        if ts_key not in visual_by_time:
+            visual_by_time[ts_key] = []
+        visual_by_time[ts_key].append(vis)
+    
+    # Output visual regions (limit to avoid huge files)
+    region_count = 0
+    for ts_key in sorted(visual_by_time.keys(), key=lambda x: float(x)):
+        for vis in visual_by_time[ts_key]:
+            entity_type = vis.get("entity_type", "unknown")
+            bbox = vis.get("bbox")
+            confidence = vis.get("confidence", 0)
+            
+            if bbox:
+                bbox_str = f"[{bbox[0]:.0f}, {bbox[1]:.0f}, {bbox[2]:.0f}, {bbox[3]:.0f}]"
+                lines.append(f"- [{ts_key}s] {entity_type}: bbox={bbox_str}, conf={confidence:.2f}")
+            else:
+                lines.append(f"- [{ts_key}s] {entity_type}: detected (conf={confidence:.2f})")
+            
+            region_count += 1
+            if region_count >= 100:  # Limit
+                lines.append(f"\n... and {len(visual_results) - 100} more visual regions")
+                break
+        if region_count >= 100:
+            break
+    
+    if not visual_results:
+        lines.append("- No visual regions detected.")
     
     return "\n".join(lines)
 
@@ -820,7 +892,7 @@ def main():
     
     # Save GPT-ready text
     output_txt = os.path.join(args.output, f"{video_name}_context.txt")
-    gpt_text = format_for_gpt(timeline, kb, causal_links, video_name)
+    gpt_text = format_for_gpt(timeline, kb, causal_links, visual_results, video_name)
     with open(output_txt, "w") as f:
         f.write(gpt_text)
     logger.info(f"Saved: {output_txt}")
