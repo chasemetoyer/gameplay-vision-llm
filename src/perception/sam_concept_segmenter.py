@@ -169,7 +169,7 @@ class SAMConfig:
     # Model settings
     model_name: str = "facebook/sam3"
     device: str = "cuda"
-    dtype: torch.dtype = torch.float16
+    dtype: torch.dtype = torch.float32  # Use float32 for compatibility with processor
 
     # Segmentation thresholds
     mask_threshold: float = 0.0  # Logit threshold for mask binarization
