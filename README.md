@@ -13,49 +13,6 @@ Download the trained adapters from Hugging Face:
 This project implements a multimodal perception-reasoning pipeline for analyzing gameplay videos. The system integrates visual perception (SAM3, SigLIP), temporal understanding (VideoMAE), audio processing (Wav2Vec2, Whisper), and text extraction (OCR) with a vision-language model (Qwen3-VL-8B-Instruct) through learned projection layers. The architecture enables natural language question-answering about video content by projecting heterogeneous perceptual embeddings into a unified representation space compatible with the language model's hidden dimensions.
 
 ## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         INPUT: Video + Audio                             │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-           ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-           │ Frame Extract │ │  Audio Track  │ │  Whisper STT  │
-           │   (0.5 FPS)   │ │   (FFmpeg)    │ │ (Transcribe)  │
-           └───────────────┘ └───────────────┘ └───────────────┘
-                    │               │               │
-        ┌───────────┼───────────┐   │               │
-        ▼           ▼           ▼   ▼               ▼
-   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
-   │  SAM3   │ │ SigLIP  │ │VideoMAE │ │Wav2Vec2 │ │   OCR   │
-   │ Detect  │ │ Encode  │ │ Encode  │ │ Encode  │ │PaddleOCR│
-   └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘
-        │           │           │           │           │
-        │      1152-dim     768-dim    1024-dim         │
-        │           │           │           │           │
-        │      ┌────┴───────────┴───────────┘           │
-        │      ▼                                        ▼
-        │  ┌─────────────────────────────┐    ┌───────────────┐
-        │  │  ProjectorBank (Trained)    │    │   Timeline    │
-        │  │  SigLIP  → 4096-dim         │    │   Indexer     │
-        │  │  VideoMAE → 4096-dim        │    │ (OCR+Speech)  │
-        │  │  Wav2Vec2 → 4096-dim        │    └───────────────┘
-        │  └─────────────────────────────┘            │
-        │               │                              │
-        └───────────────┼──────────────────────────────┘
-                        ▼
-           ┌─────────────────────────────────┐
-           │  Qwen3-VL-8B + LoRA Adapter     │
-           │  (Flash Attention 2)            │
-           └─────────────────────────────────┘
-                        │
-                        ▼
-           ┌─────────────────────────────────┐
-           │     Natural Language Response   │
-           └─────────────────────────────────┘
-```
 ![Generated Image December 06, 2025 - 1_11PM (1)](https://github.com/user-attachments/assets/4d83fb3b-f6f2-4a38-99d7-32990d162eb3)
 
 
