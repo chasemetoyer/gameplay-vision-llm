@@ -69,3 +69,7 @@ logs/
 
 # HuggingFace cache
 .cache/
+# Downloaded videos
+data/videos/*.mp4
+data/videos/*.webm
+*.mp4

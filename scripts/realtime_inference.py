@@ -35,6 +35,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy HTTP and HuggingFace logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("ppocr").setLevel(logging.WARNING)
+
 
 # =============================================================================
 # Video Download & Loading
@@ -63,11 +71,16 @@ def download_youtube(url: str, output_dir: str = "data/videos") -> str:
     
     os.makedirs(output_dir, exist_ok=True)
     
-    # Configure yt-dlp
+    # Configure yt-dlp - force H.264 codec (avoid AV1 which OpenCV can't decode)
     ydl_opts = {
-        'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
+        'format': 'bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=720][vcodec^=avc]+bestaudio/best[height<=720]',
         'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
         'merge_output_format': 'mp4',
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',
+        }],
+        'postprocessor_args': ['-c:v', 'libx264', '-crf', '23', '-c:a', 'aac'],
         'quiet': False,
         'no_warnings': True,
     }
@@ -76,16 +89,29 @@ def download_youtube(url: str, output_dir: str = "data/videos") -> str:
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        video_id = info.get('id', 'video')
         video_title = info.get('title', 'video')
-        # Clean filename
-        safe_title = re.sub(r'[^\w\s-]', '', video_title).strip()[:50]
-        video_path = os.path.join(output_dir, f"{safe_title}.mp4")
         
-        # Find actual downloaded file
+        # Find the actual downloaded file (may have unicode chars)
+        downloaded_file = None
         for f in os.listdir(output_dir):
-            if f.endswith('.mp4') and safe_title[:20].lower() in f.lower():
-                video_path = os.path.join(output_dir, f)
+            if f.endswith('.mp4'):
+                # Check if this is a recent file
+                downloaded_file = os.path.join(output_dir, f)
                 break
+        
+        # Create a clean ASCII filename
+        safe_title = re.sub(r'[^\w\s-]', '', video_title)
+        safe_title = re.sub(r'\s+', '_', safe_title).strip()[:40]
+        clean_path = os.path.join(output_dir, f"{safe_title}_{video_id}.mp4")
+        
+        # Rename if needed to avoid unicode issues with decord
+        if downloaded_file and downloaded_file != clean_path:
+            import shutil
+            shutil.move(downloaded_file, clean_path)
+            video_path = clean_path
+        else:
+            video_path = downloaded_file or clean_path
     
     logger.info(f"Downloaded to: {video_path}")
     return video_path
@@ -93,65 +119,43 @@ def download_youtube(url: str, output_dir: str = "data/videos") -> str:
 
 def extract_frames(video_path: str, fps: float = 0.5) -> list[tuple[float, Image.Image]]:
     """Extract frames from video at specified FPS."""
-    try:
-        import decord
-        decord.bridge.set_bridge("native")
+    import cv2
+    
+    # Use cv2 (more robust with various formats)
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+    
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = total_frames / video_fps if video_fps > 0 else 0
+    
+    logger.info(f"Video: {duration:.1f}s, {video_fps:.0f} fps, {total_frames} frames")
+    
+    frame_interval = max(1, int(video_fps / fps))
+    frames = []
+    frame_idx = 0
+    
+    pbar = tqdm(total=total_frames // frame_interval, desc="Extracting frames")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
         
-        vr = decord.VideoReader(video_path)
-        video_fps = vr.get_avg_fps()
-        total_frames = len(vr)
-        duration = total_frames / video_fps
-        
-        logger.info(f"Video: {duration:.1f}s, {video_fps:.1f} fps, {total_frames} frames")
-        
-        # Sample at target FPS
-        frame_interval = max(1, int(video_fps / fps))
-        sample_indices = list(range(0, total_frames, frame_interval))
-        
-        frames = []
-        for idx in tqdm(sample_indices, desc="Extracting frames"):
-            timestamp = idx / video_fps
-            frame_np = vr[idx].asnumpy()
-            frame_pil = Image.fromarray(frame_np)
+        if frame_idx % frame_interval == 0:
+            timestamp = frame_idx / video_fps
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_pil = Image.fromarray(frame_rgb)
             frames.append((timestamp, frame_pil))
+            pbar.update(1)
         
-        logger.info(f"Extracted {len(frames)} frames at {fps} FPS")
-        return frames
-        
-    except ImportError:
-        # Fallback to cv2
-        import cv2
-        
-        cap = cv2.VideoCapture(video_path)
-        video_fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = total_frames / video_fps if video_fps > 0 else 0
-        
-        logger.info(f"Video: {duration:.1f}s, {video_fps:.0f} fps")
-        
-        frame_interval = max(1, int(video_fps / fps))
-        frames = []
-        frame_idx = 0
-        
-        pbar = tqdm(total=total_frames // frame_interval, desc="Extracting frames")
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            if frame_idx % frame_interval == 0:
-                timestamp = frame_idx / video_fps
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_image = Image.fromarray(frame_rgb)
-                frames.append((timestamp, pil_image))
-                pbar.update(1)
-            
-            frame_idx += 1
-        
-        pbar.close()
-        cap.release()
-        logger.info(f"Extracted {len(frames)} frames")
-        return frames
+        frame_idx += 1
+    
+    pbar.close()
+    cap.release()
+    
+    logger.info(f"Extracted {len(frames)} frames at {fps} FPS")
+    return frames
 
 
 # =============================================================================
@@ -483,12 +487,16 @@ def run_speech_transcription(video_path: str, device: str = "cuda"):
     
     Returns list of speech segments with timestamps.
     """
+    print("=" * 50)
+    print("🎤 WHISPER SPEECH TRANSCRIPTION")
+    print("=" * 50)
+    
     try:
         import whisper
         import numpy as np
         import subprocess
         
-        logger.info("Running speech transcription with Whisper...")
+        print(f"   [1/4] Extracting audio from video...")
         
         # Extract audio from video
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -496,10 +504,18 @@ def run_speech_transcription(video_path: str, device: str = "cuda"):
         
         cmd = ["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
                "-ar", "16000", "-ac", "1", tmp_path]
-        subprocess.run(cmd, capture_output=True)
+        result = subprocess.run(cmd, capture_output=True)
+        
+        if result.returncode != 0:
+            print(f"   ⚠️ FFmpeg failed: {result.stderr.decode()[:200]}")
+            return []
+        
+        print(f"   [2/4] Loading Whisper model (base)...")
         
         # Load Whisper model
         model = whisper.load_model("base", device=device)
+        
+        print(f"   [3/4] Transcribing audio...")
         
         # Transcribe
         result = model.transcribe(tmp_path, 
@@ -519,14 +535,22 @@ def run_speech_transcription(video_path: str, device: str = "cuda"):
                 "type": "speech",
             })
         
-        logger.info(f"Whisper: {len(segments)} speech segments transcribed")
+        print(f"   [4/4] ✅ Transcribed {len(segments)} speech segments")
+        
+        # Show first few segments
+        if segments:
+            print("   Sample transcriptions:")
+            for seg in segments[:3]:
+                ts = f"{int(seg['timestamp']//60):02d}:{int(seg['timestamp']%60):02d}"
+                print(f"      [{ts}] {seg['text'][:60]}...")
+        
         return segments
         
-    except ImportError:
-        logger.warning("Whisper not installed. Run: pip install openai-whisper")
+    except ImportError as e:
+        print(f"   ❌ Whisper not installed: {e}")
         return []
     except Exception as e:
-        logger.warning(f"Speech transcription failed: {e}")
+        print(f"   ❌ Speech transcription failed: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -671,17 +695,21 @@ def process_video(
         "timeline_indexer": timeline_indexer,
     }
     
-    logger.info(f"\n✅ Video processed!")
-    logger.info(f"   Frames: {len(frames)}")
+    # Print summary with explicit print (not logger)
+    print("\n" + "=" * 60)
+    print("✅ VIDEO PROCESSING COMPLETE")
+    print("=" * 60)
+    print(f"   📹 Frames extracted: {len(frames)}")
     if sam_results:
         total_det = sum(len(d["detections"]) for d in sam_results)
-        logger.info(f"   SAM3 detections: {total_det}")
-    logger.info(f"   SigLIP embeddings: {len(siglip_embs)}")
-    logger.info(f"   VideoMAE embeddings: {len(videomae_embs)}")
-    logger.info(f"   Wav2Vec2 embeddings: {len(wav2vec_embs)}")
-    logger.info(f"   OCR text regions: {len(ocr_results)}")
-    logger.info(f"   Speech segments: {len(speech_results)}")
-    logger.info(f"   Timeline events: {timeline_indexer.get_statistics()['total_events']}")
+        print(f"   🎯 SAM3 detections: {total_det}")
+    print(f"   🖼️  SigLIP embeddings: {len(siglip_embs)}")
+    print(f"   🎬 VideoMAE embeddings: {len(videomae_embs)}")
+    print(f"   🔊 Wav2Vec2 embeddings: {len(wav2vec_embs)}")
+    print(f"   📝 OCR text regions: {len(ocr_results)}")
+    print(f"   🎤 Speech segments: {len(speech_results)}")
+    print(f"   📋 Timeline events: {timeline_indexer.get_statistics()['total_events']}")
+    print("=" * 60)
     
     return loop
 

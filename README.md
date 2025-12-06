@@ -276,6 +276,70 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 - Whisper transcription adds processing time for audio-heavy content
 - OCR accuracy depends on video resolution and text clarity
 
+## Future Work
+
+### High Priority
+
+- **SAM3 Speed Optimization**
+  - Implement batch processing for multiple frames
+  - Add frame caching to skip visually similar frames
+  - Explore SAM3-Turbo or distilled variants
+  - GPU memory optimization for parallel detection
+
+- **SigLIP Inference Speed**
+  - Batch encode multiple regions simultaneously
+  - Use FP16/INT8 quantization for faster inference
+  - Implement async encoding with prefetching
+  - Explore SigLIP-Base for speed vs accuracy tradeoff
+
+- **Multi-GPU Parallelization**
+  - Pipeline parallelism: run SAM3, SigLIP, OCR, etc. on separate GPUs
+  - Data parallelism: split frames across GPUs for same model
+  - Async frame queues between pipeline stages
+  - Target 3-5x speedup with 4 GPUs
+
+- **Causal Link Extraction**
+  - Explicit action→effect pairing from timeline events
+  - Game state tracking (HP, mana, cooldowns)
+  - Rule-based causal graph construction
+  - Train causal reasoning module on gameplay data
+
+- **Timeline Enrichment**
+  - Integrate game-specific entity recognition
+  - Add damage number parsing from OCR
+  - Track character positions across frames
+  - Build entity relationship graphs
+
+### Medium Priority
+
+- **Streaming Inference**
+  - Real-time processing during video playback
+  - Incremental timeline updates
+  - Lower-latency response generation
+
+- **Multi-Language Support**
+  - Extend Whisper to detect and transcribe multiple languages
+  - Add OCR support for non-Latin scripts (Japanese, Chinese, Korean)
+
+- **Model Optimization**
+  - Quantize projectors to INT8
+  - Explore smaller LLM backbones (Qwen3-VL-4B)
+  - ONNX export for faster inference
+
+### Low Priority / Research
+
+- **Game-Specific Adapters**
+  - Train LoRA variants for specific game genres
+  - Add game state parsers for popular titles
+
+- **Interactive Training**
+  - Human-in-the-loop feedback for improving responses
+  - Active learning for edge cases
+
+- **Evaluation Benchmarks**
+  - Create gameplay video QA benchmark
+  - Metrics for causal reasoning accuracy
+
 ## References
 
 1. Kirillov, A., et al. "Segment Anything." ICCV 2023.
