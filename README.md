@@ -90,39 +90,60 @@ class MultiModalProjector(nn.Module):
 
 ## Installation
 
-### Requirements
+### Tested Environment
 
-- Python 3.12+
-- CUDA 12.x
-- 24+ GB GPU VRAM (A100 40/80GB recommended)
+This project has been tested on:
+- **RunPod Image**: `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`
+- **Python**: 3.12+
+- **CUDA**: 12.8+
+- **GPU**: NVIDIA A100 80GB (40GB+ recommended)
 
-### Quick Install
+### Quick Start (RunPod)
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/gameplay-vision-llm.git
+git clone https://github.com/chasemetoyer/gameplay-vision-llm.git
 cd gameplay-vision-llm
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
+# Option 1: Install with pip (recommended)
+pip install -r requirements.txt
 
-# Install core dependencies
+# Option 2: Install with uv (faster)
+pip install uv
+uv pip install -r requirements.txt
+uv pip sync  # Optional: sync with uv.lock for exact versions
+
+# Download trained weights from Hugging Face
+python -c "from huggingface_hub import snapshot_download; snapshot_download('cjm249/gameplay-vision-llm-adapters', local_dir='outputs')"
+```
+
+### Run Inference
+
+```bash
+# With a local video
+python scripts/realtime_inference.py \
+    --video "/path/to/your/gameplay.mp4" \
+    --use-sam \
+    --interactive
+
+# With a YouTube URL
+python scripts/realtime_inference.py \
+    --video "https://www.youtube.com/watch?v=VIDEO_ID" \
+    --use-sam \
+    --interactive
+```
+
+### Manual Installation (if needed)
+
+```bash
+# Core dependencies only (lighter install)
 pip install -r requirements-core.txt
 
 # Install Flash Attention (recommended for performance)
 pip install flash-attn --no-build-isolation
 
-# Install PaddleOCR (optional, for OCR)
+# Install PaddleOCR (required for OCR)
 pip install paddlepaddle-gpu paddleocr
-```
-
-### Full Dependency Lock
-
-For exact reproducibility, use the locked requirements:
-
-```bash
-pip install -r requirements.txt
 ```
 
 ## Project Structure
