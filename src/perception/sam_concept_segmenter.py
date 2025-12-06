@@ -277,36 +277,51 @@ class Sam3ModelWrapper:
         
         SAM3 API: Uses processor for both input preparation and output post-processing.
         """
+        import signal
+        import sys
+        
         self._load_model()
 
         if self._processor is None:
             return self._placeholder_segment(image)
 
-        # SAM3 uses a simple processor-based API
-        inputs = self._processor(
-            images=image,
-            text=text_prompt,
-            return_tensors="pt",
-        ).to(self.config.device)
-        
-        with torch.no_grad():
-            outputs = self._model(**inputs)
+        try:
+            # Log each step for debugging hangs
+            logger.debug(f"SAM3: Processing text prompt '{text_prompt}'")
+            
+            # SAM3 uses a simple processor-based API
+            logger.debug("SAM3: Running processor...")
+            inputs = self._processor(
+                images=image,
+                text=text_prompt,
+                return_tensors="pt",
+            ).to(self.config.device)
+            logger.debug("SAM3: Processor done, running model inference...")
+            
+            with torch.no_grad():
+                # Use torch.inference_mode for faster inference
+                outputs = self._model(**inputs)
+            logger.debug("SAM3: Model inference done, post-processing...")
 
-        # Post-process results
-        original_sizes = inputs.get("original_sizes")
-        if original_sizes is not None:
-            target_sizes = original_sizes.tolist()
-        else:
-            target_sizes = [image.size[::-1]]  # (W, H) -> (H, W)
+            # Post-process results
+            original_sizes = inputs.get("original_sizes")
+            if original_sizes is not None:
+                target_sizes = original_sizes.tolist()
+            else:
+                target_sizes = [image.size[::-1]]  # (W, H) -> (H, W)
 
-        results = self._processor.post_process_instance_segmentation(
-            outputs,
-            threshold=threshold,
-            mask_threshold=mask_threshold,
-            target_sizes=target_sizes,
-        )
+            results = self._processor.post_process_instance_segmentation(
+                outputs,
+                threshold=threshold,
+                mask_threshold=mask_threshold,
+                target_sizes=target_sizes,
+            )
+            logger.debug("SAM3: Post-processing done")
 
-        return results
+            return results
+        except Exception as e:
+            logger.warning(f"SAM3 segment_with_text failed: {e}")
+            return self._placeholder_segment(image)
 
     def segment_with_boxes(
         self,

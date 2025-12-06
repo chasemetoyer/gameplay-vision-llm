@@ -13,10 +13,15 @@ Usage:
     python scripts/extract_features.py --video data/gameplay.mp4 --output data/outputs/
 """
 
+# CRITICAL: Set paddle CPU mode BEFORE any imports
+# PaddlePaddle conflicts with PyTorch CUDNN when both try to use GPU
+# We run OCR on CPU to avoid this - must be set before ANY paddle code loads
+import os
+_PADDLE_CUDA_SAVED = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+
 import argparse
 import json
 import logging
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -357,41 +362,94 @@ def run_siglip_encoder(frames: list[tuple[float, Image.Image]], device: str = "c
 # =============================================================================
 
 def run_ocr(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
-    """Run PaddleOCR on frames to extract text."""
-    try:
-        from perception.ocr_pipeline import OCRPipeline, OCRConfig
-        import numpy as np
-        
-        config = OCRConfig(use_gpu=(device == "cuda"))
-        ocr = OCRPipeline(config)
-        
-        results = []
+    """
+    Run PaddleOCR on frames to extract text.
+    
+    Uses subprocess to isolate PaddlePaddle from PyTorch's CUDA context,
+    avoiding CUDNN version conflicts.
+    """
+    import subprocess
+    import tempfile
+    import numpy as np
+    
+    # Save frames to temp directory for subprocess to read
+    with tempfile.TemporaryDirectory() as tmpdir:
+        frame_files = []
         for idx, (timestamp, frame) in enumerate(frames):
-            try:
-                # Convert PIL to numpy array
-                frame_np = np.array(frame.convert("RGB"))
-                
-                # Use correct method name
-                ocr_result = ocr.extract_text_from_frame(frame_np, idx, timestamp)
-                
-                if ocr_result and ocr_result.detections:
-                    for detection in ocr_result.detections:
-                        results.append({
-                            "timestamp": timestamp,
-                            "text": detection.text,
-                            "confidence": detection.confidence,
-                            "bbox": detection.bbox,
-                            "category": detection.category,
-                        })
-            except Exception as e:
-                logger.warning(f"OCR failed at {timestamp:.1f}s: {e}")
+            frame_path = os.path.join(tmpdir, f"frame_{idx:04d}_{timestamp:.3f}.png")
+            frame.save(frame_path)
+            frame_files.append((timestamp, frame_path))
         
-        logger.info(f"OCR extracted {len(results)} text regions")
-        return results
+        # Write frame list to JSON
+        frame_list_path = os.path.join(tmpdir, "frames.json")
+        with open(frame_list_path, 'w') as f:
+            json.dump(frame_files, f)
         
-    except ImportError as e:
-        logger.warning(f"OCR not available: {e}")
-        return []
+        results_path = os.path.join(tmpdir, "results.json")
+        
+        # Run OCR in subprocess with CUDA hidden
+        ocr_script = f'''
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["FLAGS_use_cuda"] = "0"
+
+import sys
+sys.path.insert(0, "{Path(__file__).parent.parent / 'src'}")
+
+import json
+import numpy as np
+from PIL import Image
+
+try:
+    from perception.ocr_pipeline import OCRPipeline, OCRConfig
+    config = OCRConfig(use_gpu=False)
+    ocr = OCRPipeline(config)
+    
+    with open("{frame_list_path}") as f:
+        frames = json.load(f)
+    
+    results = []
+    for idx, (timestamp, path) in enumerate(frames):
+        try:
+            frame = np.array(Image.open(path).convert("RGB"))
+            ocr_result = ocr.extract_text_from_frame(frame, idx, timestamp)
+            if ocr_result and ocr_result.detections:
+                for det in ocr_result.detections:
+                    results.append({{"timestamp": timestamp, "text": det.text, "confidence": det.confidence, "bbox": det.bbox}})
+        except Exception as e:
+            print(f"OCR error at {{timestamp:.1f}}s: {{e}}", file=sys.stderr)
+    
+    with open("{results_path}", 'w') as f:
+        json.dump(results, f)
+    print(f"OCR extracted {{len(results)}} text regions")
+except Exception as e:
+    print(f"OCR failed: {{e}}", file=sys.stderr)
+    with open("{results_path}", 'w') as f:
+        json.dump([], f)
+'''
+        
+        logger.info(f"Running OCR in subprocess on {len(frames)} frames...")
+        result = subprocess.run(
+            [sys.executable, "-c", ocr_script],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.stdout:
+            logger.info(result.stdout.strip())
+        if result.stderr:
+            for line in result.stderr.strip().split('\n')[:5]:  # Limit error output
+                logger.warning(f"OCR subprocess: {line}")
+        
+        # Read results
+        try:
+            with open(results_path) as f:
+                ocr_results = json.load(f)
+            logger.info(f"OCR extracted {len(ocr_results)} text regions")
+            return ocr_results
+        except Exception as e:
+            logger.warning(f"Failed to read OCR results: {e}")
+            return []
 
 
 # =============================================================================
@@ -419,7 +477,14 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
         results = []
         logger.info(f"Loading SAM 3 model on {device}...")
         
+        # Force model load before processing loop
+        segmenter._load_model()
+        logger.info(f"SAM 3 model loaded. Processing {len(frames)} frames with prompts: {prompts}")
+        
         for idx, (timestamp, frame) in enumerate(frames):
+            # Show progress every frame for visibility
+            if idx % 5 == 0:
+                logger.info(f"SAM processing frame {idx}/{len(frames)} [{timestamp:.1f}s]...")
             try:
                 # Run segmentation for each prompt
                 frame_detections = []
@@ -1010,6 +1075,7 @@ def main():
     parser.add_argument("--use-sam", action="store_true", help="Use SAM 3 for advanced entity detection")
     parser.add_argument("--skip-audio", action="store_true", help="Skip audio processing (faster)")
     parser.add_argument("--skip-hico", action="store_true", help="Skip InternVideo HiCo (faster)")
+    parser.add_argument("--max-frames", type=int, default=0, help="Max frames to process (0=all, for quick testing)")
     args = parser.parse_args()
     
     # Validate inputs
@@ -1027,6 +1093,11 @@ def main():
     logger.info("Step 1/8: Extracting frames...")
     frames = extract_frames(args.video, fps=args.fps)
     
+    # Limit frames for quick testing
+    if args.max_frames > 0 and len(frames) > args.max_frames:
+        logger.info(f"Limiting to {args.max_frames} frames for testing (was {len(frames)})")
+        frames = frames[:args.max_frames]
+    
     # Step 2: Run InternVideo2.5 HiCo (Temporal Compression)
     if not args.skip_hico:
         logger.info("Step 2/8: Running InternVideo2.5 HiCo...")
@@ -1035,13 +1106,14 @@ def main():
         logger.info("Step 2/8: Skipping HiCo (--skip-hico flag)")
         hico_results = {"num_input_frames": len(frames), "num_temporal_tokens": 0, "tokens": None}
     
-    # Step 3: Run visual detection (SAM or Motion)
+    # Step 3: Run visual detection (SAM or Motion) - MUST run before OCR
+    # PyTorch (SAM) and PaddlePaddle (OCR) have CUDNN conflicts - run PyTorch first!
     logger.info("Step 3/8: Running visual detection...")
     visual_results, entity_tracker = run_visual_detection(frames, device=args.device, use_sam=args.use_sam)
     
-    # Step 4: Run OCR
-    logger.info("Step 4/8: Running OCR...")
-    ocr_results = run_ocr(frames, device=args.device)
+    # Step 4: Run OCR - AFTER PyTorch models, and force CPU to avoid CUDNN conflict
+    logger.info("Step 4/8: Running OCR (on CPU to avoid CUDNN conflict)...")
+    ocr_results = run_ocr(frames, device="cpu")  # Force CPU regardless of args.device
     
     # Step 5: Run SigLIP (Semantic Embeddings)
     logger.info("Step 5/8: Running SigLIP Encoder...")

@@ -238,6 +238,19 @@ class OCRPipeline:
             return
 
         try:
+            # CRITICAL: Set paddle to CPU mode BEFORE importing paddleocr
+            # This prevents CUDA initialization which conflicts with PyTorch
+            import os
+            if not self.config.use_gpu:
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+                os.environ["FLAGS_use_cuda"] = "0"
+                # Also set paddle-specific flags
+                try:
+                    import paddle
+                    paddle.set_device('cpu')
+                except Exception:
+                    pass
+            
             from paddleocr import PaddleOCR
 
             logger.info("Loading PaddleOCR engine (PP-OCRv4)")
