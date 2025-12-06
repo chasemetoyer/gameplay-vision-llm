@@ -56,6 +56,8 @@ This project implements a multimodal perception-reasoning pipeline for analyzing
            │     Natural Language Response   │
            └─────────────────────────────────┘
 ```
+![Generated Image December 06, 2025 - 3_00AM](https://github.com/user-attachments/assets/b89c9730-0e0c-4945-b82c-1a8240c5eb35)
+
 
 ### Perception Pipeline Components
 
