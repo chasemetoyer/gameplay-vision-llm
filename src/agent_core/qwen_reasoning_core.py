@@ -20,6 +20,7 @@ References:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -72,9 +73,16 @@ class ReasoningCoreConfig:
     # Section 9: Projector Dimensions
     # =========================================================================
     siglip_dim: int = 1152          # SigLIP 2 So400m embedding dimension
-    internvideo_dim: int = 1408     # InternVideo2-1B embedding dimension
-    audiomae_dim: int = 1024        # AudioMAE embedding dimension
-    llm_hidden_dim: int = 3584      # Qwen2.5-7B hidden dimension
+    
+    # Video embedding dimensions (choose one based on what's working)
+    internvideo_dim: int = 1408     # InternVideo2-1B (legacy, may not work with transformers 5.x)
+    videomae_dim: int = 768         # VideoMAE (transformers 5.x compatible)
+    
+    # Audio embedding dimensions (choose one based on what's working)
+    audiomae_dim: int = 1024        # AudioMAE embedding dimension (legacy)
+    wav2vec2_dim: int = 1024        # Wav2Vec2-Large (transformers 5.x compatible, same dim)
+    
+    llm_hidden_dim: int = 4096      # Qwen3-VL-8B hidden dimension
 
     # =========================================================================
     # Section 9: Temporal Context (HiCo)
@@ -203,7 +211,7 @@ class MultiModalProjector(torch.nn.Module):
         Linear(encoder_dim, llm_dim) -> GELU -> Linear(llm_dim, llm_dim)
     """
     
-    def __init__(self, encoder_dim: int, llm_dim: int = 3584):
+    def __init__(self, encoder_dim: int, llm_dim: int = 4096):
         super().__init__()
         self.net = torch.nn.Sequential(
             torch.nn.Linear(encoder_dim, llm_dim),
@@ -232,8 +240,9 @@ class ProjectorBank:
     
     Manages separate projectors for:
     - SigLIP2 (region embeddings): 1152 -> 3584
-    - InternVideo2 (video embeddings): 1408 -> 3584
-    - AudioMAE (audio embeddings): 1024 -> 3584
+    - VideoMAE (video embeddings): 768 -> 3584 (transformers 5.x compatible)
+    - InternVideo2 (video embeddings): 1408 -> 3584 (legacy)
+    - Wav2Vec2/AudioMAE (audio embeddings): 1024 -> 3584
     """
     
     def __init__(self, config: ReasoningCoreConfig):
@@ -244,9 +253,18 @@ class ProjectorBank:
         self.siglip_proj = MultiModalProjector(
             config.siglip_dim, config.llm_hidden_dim
         )
+        
+        # VideoMAE projector (768-dim, transformers 5.x compatible)
+        self.videomae_proj = MultiModalProjector(
+            config.videomae_dim, config.llm_hidden_dim
+        )
+        
+        # Legacy InternVideo projector (1408-dim, may not work with transformers 5.x)
         self.video_proj = MultiModalProjector(
             config.internvideo_dim, config.llm_hidden_dim
         )
+        
+        # Audio projector (1024-dim, works with both Wav2Vec2 and AudioMAE)
         self.audio_proj = MultiModalProjector(
             config.audiomae_dim, config.llm_hidden_dim
         )
@@ -256,29 +274,44 @@ class ProjectorBank:
     def to(self, device: str) -> "ProjectorBank":
         """Move all projectors to device."""
         self.siglip_proj = self.siglip_proj.to(device)
+        self.videomae_proj = self.videomae_proj.to(device)
         self.video_proj = self.video_proj.to(device)
         self.audio_proj = self.audio_proj.to(device)
         self.device = device
         return self
     
     def project_region(self, embeddings: torch.Tensor) -> torch.Tensor:
-        """Project SigLIP2 region embeddings."""
+        """Project SigLIP2 region embeddings (1152 -> 3584)."""
         return self.siglip_proj(embeddings.to(self.device))
     
+    def project_videomae(self, embeddings: torch.Tensor) -> torch.Tensor:
+        """Project VideoMAE embeddings (768 -> 3584)."""
+        return self.videomae_proj(embeddings.to(self.device))
+    
     def project_video(self, embeddings: torch.Tensor) -> torch.Tensor:
-        """Project InternVideo2 HiCo embeddings."""
+        """Project InternVideo2 HiCo embeddings (1408 -> 3584, legacy)."""
         return self.video_proj(embeddings.to(self.device))
     
     def project_audio(self, embeddings: torch.Tensor) -> torch.Tensor:
-        """Project AudioMAE embeddings."""
+        """Project Wav2Vec2/AudioMAE embeddings (1024 -> 3584)."""
         return self.audio_proj(embeddings.to(self.device))
     
     def load_weights(self, path: str) -> None:
         """Load pre-trained projector weights."""
-        state_dict = torch.load(path, map_location=self.device)
-        self.siglip_proj.load_state_dict(state_dict.get("siglip", {}))
-        self.video_proj.load_state_dict(state_dict.get("video", {}))
-        self.audio_proj.load_state_dict(state_dict.get("audio", {}))
+        state_dict = torch.load(path, map_location=self.device, weights_only=False)
+        
+        # Load the 3 trained modalities
+        if "siglip" in state_dict:
+            self.siglip_proj.load_state_dict(state_dict["siglip"])
+        if "videomae" in state_dict:
+            self.videomae_proj.load_state_dict(state_dict["videomae"])
+        if "audio" in state_dict:
+            self.audio_proj.load_state_dict(state_dict["audio"])
+        
+        # Legacy: also try to load video_proj if present
+        if "video" in state_dict:
+            self.video_proj.load_state_dict(state_dict["video"])
+        
         self._initialized = True
         logger.info(f"Loaded projector weights from {path}")
     
@@ -286,8 +319,10 @@ class ProjectorBank:
         """Save projector weights."""
         state_dict = {
             "siglip": self.siglip_proj.state_dict(),
-            "video": self.video_proj.state_dict(),
+            "videomae": self.videomae_proj.state_dict(),
             "audio": self.audio_proj.state_dict(),
+            # Also save legacy video_proj for backward compatibility
+            "video": self.video_proj.state_dict(),
         }
         torch.save(state_dict, path)
         logger.info(f"Saved projector weights to {path}")
@@ -833,8 +868,10 @@ class QwenVLCore:
     def __init__(
         self,
         config: Optional[ReasoningCoreConfig] = None,
+        lora_path: Optional[str] = None,
     ):
         self.config = config or ReasoningCoreConfig()
+        self.lora_path = lora_path
         self.retriever = TimelineRetriever(self.config)
         self.visual_processor = VisualInputProcessor(self.config)
 
@@ -858,29 +895,64 @@ class QwenVLCore:
                 self.config.model_name,
             )
 
-            # Load model with flash attention if available
+            # Load model - try with flash attention first, then without
             model_kwargs = {
                 "torch_dtype": self.config.dtype,
                 "device_map": "auto",
             }
+            
+            # Try flash attention if enabled
             if self.config.use_flash_attention:
-                model_kwargs["attn_implementation"] = "flash_attention_2"
-
-            self._model = Qwen3VLForConditionalGeneration.from_pretrained(
-                self.config.model_name,
-                **model_kwargs,
-            )
+                try:
+                    self._model = Qwen3VLForConditionalGeneration.from_pretrained(
+                        self.config.model_name,
+                        attn_implementation="flash_attention_2",
+                        **model_kwargs,
+                    )
+                    logger.info("Loaded with flash_attention_2")
+                except Exception as fa_error:
+                    logger.warning(f"Flash attention not available: {fa_error}")
+                    logger.info("Falling back to standard attention...")
+                    self._model = Qwen3VLForConditionalGeneration.from_pretrained(
+                        self.config.model_name,
+                        **model_kwargs,
+                    )
+            else:
+                self._model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    self.config.model_name,
+                    **model_kwargs,
+                )
+            
+            # Apply LoRA adapter if provided
+            if self.lora_path and os.path.exists(self.lora_path):
+                try:
+                    from peft import PeftModel
+                    
+                    logger.info(f"Loading LoRA adapter from {self.lora_path}...")
+                    self._model = PeftModel.from_pretrained(
+                        self._model,
+                        self.lora_path,
+                    )
+                    logger.info("LoRA adapter applied successfully")
+                except ImportError:
+                    logger.warning("PEFT not installed. LoRA adapter not applied.")
+                    logger.warning("Install with: pip install peft")
+                except Exception as e:
+                    logger.warning(f"Failed to load LoRA adapter: {e}")
+            
             self._model.eval()
-
             logger.info("Qwen3-VL loaded successfully")
 
-        except ImportError:
+        except ImportError as e:
+            logger.error(f"ImportError loading Qwen3-VL: {e}")
             logger.warning("Qwen3VLForConditionalGeneration not available.")
             logger.warning("Please update transformers: pip install -U transformers")
             self._model = "placeholder"
             self._processor = None
         except Exception as e:
-            logger.warning(f"Failed to load Qwen3-VL: {e}")
+            logger.error(f"Failed to load Qwen3-VL: {e}")
+            import traceback
+            traceback.print_exc()
             self._model = "placeholder"
             self._processor = None
 
@@ -1186,14 +1258,28 @@ class PerceptionReasoningLoop:
         config: Optional[ReasoningCoreConfig] = None,
         timeline_indexer=None,
         knowledge_base=None,
+        projector_weights_path: Optional[str] = None,
+        lora_path: Optional[str] = None,
     ):
         self.config = config or ReasoningCoreConfig()
         
-        # Core components
-        self.reasoning_core = QwenVLCore(self.config)
+        # Store paths
+        self.projector_weights_path = projector_weights_path
+        self.lora_path = lora_path
+        
+        # Core components - pass lora_path to QwenVLCore for LoRA loading
+        self.reasoning_core = QwenVLCore(self.config, lora_path=lora_path)
         self.trigger_detector = TriggerDetector(self.config)
         self.temporal_context = TemporalContextManager(self.config)
+        
+        # Initialize projectors and load weights if available
         self.projectors = ProjectorBank(self.config)
+        self.projectors.to(self.config.device)
+        if projector_weights_path and os.path.exists(projector_weights_path):
+            self.projectors.load_weights(projector_weights_path)
+            logger.info(f"Loaded projector weights from {projector_weights_path}")
+        else:
+            logger.info("Projectors initialized (no pre-trained weights loaded)")
         
         # External references
         self.timeline_indexer = timeline_indexer
@@ -1249,6 +1335,8 @@ class PerceptionReasoningLoop:
         audio_events: Optional[list[dict]] = None,
         ocr_results: Optional[list[dict]] = None,
         region_embeddings: Optional[torch.Tensor] = None,
+        videomae_embeddings: Optional[torch.Tensor] = None,
+        audio_embeddings: Optional[torch.Tensor] = None,
         force_reason: bool = False,
     ) -> Optional[str]:
         """
@@ -1265,7 +1353,9 @@ class PerceptionReasoningLoop:
             visual_detections: SAM3 detection results
             audio_events: Qwen2-Audio event detections
             ocr_results: PaddleOCR text extractions
-            region_embeddings: Pre-computed SigLIP2 embeddings for regions
+            region_embeddings: Pre-computed SigLIP2 embeddings (N, 1152)
+            videomae_embeddings: Pre-computed VideoMAE embeddings (N, 768)
+            audio_embeddings: Pre-computed Wav2Vec2 embeddings (N, 1024)
             force_reason: Force reasoning even without trigger
             
         Returns:
@@ -1312,9 +1402,27 @@ class PerceptionReasoningLoop:
         # Get temporal context summary
         temporal_summary = self.temporal_context.get_context_summary()
         
+        # Project multimodal embeddings if provided
+        projected = self.project_embeddings(
+            siglip_embeddings=region_embeddings,
+            videomae_embeddings=videomae_embeddings,
+            audio_embeddings=audio_embeddings,
+        )
+        multimodal_context = self.get_multimodal_context(projected)
+        
+        # Build full context string
+        context_parts = []
+        if temporal_summary:
+            context_parts.append(f"[Temporal Context: {temporal_summary}]")
+        if multimodal_context:
+            context_parts.append(multimodal_context)
+        
+        full_context = "\n".join(context_parts)
+        full_query = f"{query}\n\n{full_context}" if full_context else query
+        
         # Execute reasoning
         response = self.reasoning_core.reason(
-            query=f"{query}\n\n[Temporal Context: {temporal_summary}]",
+            query=full_query,
             current_frame=frame,
             timeline_indexer=self.timeline_indexer,
             knowledge_base=self.knowledge_base,
@@ -1359,6 +1467,77 @@ class PerceptionReasoningLoop:
             knowledge_base=self.knowledge_base,
         )
     
+    def project_embeddings(
+        self,
+        siglip_embeddings: Optional[torch.Tensor] = None,
+        videomae_embeddings: Optional[torch.Tensor] = None,
+        audio_embeddings: Optional[torch.Tensor] = None,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Project raw encoder embeddings into LLM space using trained projectors.
+        
+        This is the key inference step that transforms perception embeddings
+        into multimodal tokens that the LLM can understand.
+        
+        Args:
+            siglip_embeddings: SigLIP2 region embeddings (N, 1152)
+            videomae_embeddings: VideoMAE temporal embeddings (N, 768)
+            audio_embeddings: Wav2Vec2 audio embeddings (N, 1024)
+            
+        Returns:
+            Dict of projected embeddings, each (N, 4096)
+        """
+        projected = {}
+        
+        with torch.no_grad():
+            if siglip_embeddings is not None:
+                siglip_embeddings = siglip_embeddings.to(self.config.device).float()
+                projected["siglip"] = self.projectors.project_region(siglip_embeddings)
+                
+            if videomae_embeddings is not None:
+                videomae_embeddings = videomae_embeddings.to(self.config.device).float()
+                projected["videomae"] = self.projectors.project_videomae(videomae_embeddings)
+                
+            if audio_embeddings is not None:
+                audio_embeddings = audio_embeddings.to(self.config.device).float()
+                projected["audio"] = self.projectors.project_audio(audio_embeddings)
+        
+        return projected
+    
+    def get_multimodal_context(
+        self,
+        projected_embeddings: dict[str, torch.Tensor],
+    ) -> str:
+        """
+        Format projected embeddings as context string for the LLM.
+        
+        This creates textual placeholders that reference the projected embeddings,
+        which can be injected into the prompt alongside the actual embeddings.
+        
+        Args:
+            projected_embeddings: Dict from project_embeddings()
+            
+        Returns:
+            Context string describing available multimodal inputs
+        """
+        parts = []
+        
+        if "siglip" in projected_embeddings:
+            num_regions = projected_embeddings["siglip"].shape[0]
+            parts.append(f"[{num_regions} visual region embeddings available]")
+            
+        if "videomae" in projected_embeddings:
+            num_temporal = projected_embeddings["videomae"].shape[0]
+            parts.append(f"[{num_temporal} temporal video embeddings available]")
+            
+        if "audio" in projected_embeddings:
+            num_audio = projected_embeddings["audio"].shape[0]
+            parts.append(f"[{num_audio} audio embeddings available]")
+        
+        if parts:
+            return "[Multimodal Context: " + ", ".join(parts) + "]"
+        return ""
+    
     def get_status(self) -> dict:
         """Get current loop status."""
         return {
@@ -1367,6 +1546,7 @@ class PerceptionReasoningLoop:
             "pending_query": self._pending_query,
             "temporal_context": self.temporal_context.get_context_summary(),
             "pending_triggers": len(self.trigger_detector.pending_triggers),
+            "projector_weights_loaded": self.projector_weights_path is not None,
         }
 
 
@@ -1403,6 +1583,8 @@ def create_perception_loop(
     timeline_indexer=None,
     knowledge_base=None,
     trigger_concepts: Optional[list[str]] = None,
+    projector_weights_path: Optional[str] = None,
+    lora_path: Optional[str] = None,
 ) -> PerceptionReasoningLoop:
     """
     Factory function to create a full Perception-Reasoning Loop.
@@ -1412,6 +1594,8 @@ def create_perception_loop(
         timeline_indexer: TimelineIndexer instance
         knowledge_base: KnowledgeBaseBuilder instance
         trigger_concepts: List of concepts that trigger reasoning
+        projector_weights_path: Path to trained projector weights (.pt)
+        lora_path: Path to LoRA adapter directory
         
     Returns:
         Configured PerceptionReasoningLoop instance
@@ -1425,4 +1609,6 @@ def create_perception_loop(
         config=config,
         timeline_indexer=timeline_indexer,
         knowledge_base=knowledge_base,
+        projector_weights_path=projector_weights_path,
+        lora_path=lora_path,
     )

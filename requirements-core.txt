@@ -1,0 +1,50 @@
+# Gameplay Vision LLM - Core Dependencies
+# Tested on Python 3.12, CUDA 12.8, Ubuntu 22.04
+
+# Core ML/DL
+torch>=2.8.0
+transformers>=4.47.0
+accelerate>=1.12.0
+peft>=0.7.0
+bitsandbytes>=0.48.0
+
+# Vision Models
+timm>=1.0.0
+torchvision>=0.21.0
+
+# Audio Processing
+openai-whisper>=20231117
+librosa>=0.10.0
+
+# Video Processing
+decord>=0.6.0
+opencv-python>=4.10.0
+
+# Embeddings & Retrieval
+sentence-transformers>=4.0.0
+
+# OCR (optional - install separately for GPU)
+# paddlepaddle-gpu>=2.6.0
+# paddleocr>=2.10.0
+
+# Flash Attention (optional - requires manual install)
+# flash-attn>=2.8.0
+
+# Web & API
+fastapi>=0.115.0
+uvicorn>=0.34.0
+httpx>=0.28.0
+
+# Data & Utilities
+numpy>=1.26.0
+pillow>=11.0.0
+tqdm>=4.67.0
+pyyaml>=6.0.0
+python-dotenv>=1.1.0
+
+# Video Download
+yt-dlp>=2025.11.0
+
+# Development
+pytest>=8.0.0
+ipython>=8.30.0

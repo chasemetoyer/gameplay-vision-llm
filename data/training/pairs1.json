@@ -1,0 +1,190 @@
+[
+    {
+        "question": "What is the full causal chain that caused EVEQUE to enter the BROKEN state, citing all relevant timestamps and abilities used?",
+        "answer": "The chain begins when OVERCHARGE was selected at [04:08] and applied at maximum charge 10/10 at [04:10]. According to the causal links, this directly leads to the BROKEN status appearing at [04:13]. The sequence is: Select OVERCHARGE → Apply 10/10 Overcharge → BROKEN at [04:13]."
+    },
+    {
+        "question": "How do the visual indicators of STAINS at [01:02] correlate with the later healing event at [02:00]?",
+        "answer": "STAINS are shown at [01:02] as a result of casting skills. The causal links show that STAINS accumulation at [118.1s] contributes to the Perfect Heal effect at [120.1s], which aligns with the +65 recovery at [02:00]. The sequence is: STAINS buildup → Trigger healing interaction → +65 heal event."
+    },
+    {
+        "question": "Why does IMMOLATION at [01:52] represent an escalating threat, and how does its Burn stacks interact with the RECOVERY mechanic shown at [01:24]?",
+        "answer": "IMMOLATION at [01:52] applies 3 Burn stacks. Since RECOVERY at [01:24] is described as clearing negative effects, the escalating threat is that Burn deals ongoing damage until removed. The causal reasoning is: IMMOLATION applies Burn → Burn persists → RECOVERY dispels status if used promptly."
+    },
+    {
+        "question": "Based on the dialogue where Lune shouts 'Fall back!' at [00:21], how does this align with the visual detection of a large enemy at [00:17]?",
+        "answer": "The statement 'Fall back!' at [00:21] responds to the visual confirmation at [00:17] that the enemy is large ('Fuck, it's big'). Speech and visual modalities align: Large threat detected → Player ordered to reposition."
+    },
+    {
+        "question": "How does Gustave’s line 'Putain de merde!' at [00:25] relate to the health bar appearance for EVEQUE at [00:37]?",
+        "answer": "Gustave's exclamation at [00:25] conveys alarm immediately before EVEQUE's boss health bar appears at [00:37]. The emotional speech reflects recognition of an imminent boss encounter confirmed visually moments later."
+    },
+    {
+        "question": "Explain how the repeated Parry indicators between [00:43] and [00:45] demonstrate a defensive mechanic and why this likely precedes EVEQUE’s spell cast at [00:41].",
+        "answer": "The spell cast at [00:41] triggers defensive reactions. The Parry indicators at [00:43] and [00:45] reflect attempts to negate or reduce damage. The sequence is: Spell detected → Player performs consecutive Parries to mitigate impact."
+    },
+    {
+        "question": "What does the SHIELDS mechanic displayed at [00:55] imply for the player’s damage strategy when STAINS appear at [00:59]?",
+        "answer": "SHIELDS at [00:55] indicate damage mitigation. STAINS at [00:59] arrive from skill casting. Together, the player must break shields first while managing STAINS buildup. The strategy: Remove shields → Optimize damage → Manage STAINS."
+    },
+    {
+        "question": "How is the +65 'Perfect!' healing event at [02:00] causally linked to selecting HEALING LIGHT at [01:56]?",
+        "answer": "The causal links state: Selecting Heal at [116.1s] leads to the Perfect Heal at [120.1s]. In the timeline, HEALING LIGHT appears at [01:56], followed by +65 Perfect heal at [02:00]. Thus: Skill selected → Healing resolves as Perfect."
+    },
+    {
+        "question": "Why does the Enraged warning at [04:27] increase the danger level when combined with the Weakness 403 indicator at [04:25]?",
+        "answer": "Weakness appears at [04:25], showing the enemy is vulnerable. Two seconds later, EVEQUE becomes Enraged at [04:27], meaning increased damage output. The danger rises because the enemy is both wounded and transitioning into aggressive behavior."
+    },
+    {
+        "question": "Explain how the command 'Select target.' at [03:38] corresponds to the Parry+Dodge sequence at [03:44].",
+        "answer": "The target selection event at [03:38] indicates player action. Immediately after, the enemy answers with Parry+Dodge at [03:44], demonstrating reactive AI behavior: Player commits to attack → Enemy responds defensively."
+    },
+    {
+        "question": "Why does the Parry at [02:13] followed by PERFECT Parry at [02:15] indicate a mastery mechanic?",
+        "answer": "The timeline shows escalating precision: Parry at [02:13] → PERFECT Parry at [02:15]. The causal links suggest combat accuracy improves outcomes. Thus, PERFECT Parry implies the highest timing accuracy within the mechanic."
+    },
+    {
+        "question": "How does the 'Eveque summons minions.' event at [03:10] combine with STAINS at [03:20] to increase the combat complexity?",
+        "answer": "Summoning at [03:10] adds enemies, while STAINS at [03:20] indicate resource buildup from casting. More enemies + escalating STAINS means higher pressure. Causally: Summons → More actions required → STAINS accumulate during combat."
+    },
+    {
+        "question": "What does the repeated '5/10' charge indicator between [05:56] and [06:10] suggest about EVEQUE's Overcharge buildup?",
+        "answer": "The repeated 5/10 indicators show charge progression toward Overcharge. Since Overcharge at 10/10 previously caused BROKEN at [04:13], the 5/10 readings imply mid-cycle buildup toward another potential burst."
+    },
+    {
+        "question": "How does the IMMOLATION at [05:22] relate to the 'Eveque burns.' text at [05:28]?",
+        "answer": "IMMOLATION at [05:22] applies burn effects. The causal links confirm casting IMMOLATION leads to burning damage. Thus: IMMOLATION → Burn ticks → 'Eveque burns.' displayed at [05:28]."
+    },
+    {
+        "question": "Given the boss reached BROKEN at [04:13], what immediate follow-up attack should the player use based on high-damage skills shown earlier?",
+        "answer": "Since BROKEN removes defenses at [04:13], the player should immediately use LUMIERE ASSAULT demonstrated at [01:32] because it is a multi-hit physical skill optimized for exploiting BROKEN windows."
+    },
+    {
+        "question": "Based on the Enraged warning at [04:27], what defensive preparation should the player prioritize?",
+        "answer": "Enraged increases boss output. The player should prepare a RECOVERY action referencing [01:24], which dispels negative effects, or maintain Parry chains like those at [00:43] and [00:45] to mitigate incoming heavy hits."
+    },
+    {
+        "question": "How should the player react to the minion attack on Lune at [03:54]?",
+        "answer": "Since Lune is attacked at [03:54], the player should either: heal Lune using SMALL HEALING TINT from [01:28], or apply counterattacks shown in Gustave attacks at [03:03]."
+    },
+    {
+        "question": "What is the best response when EVEQUE 'charges up' at [04:49]?",
+        "answer": "Charging at [04:49] indicates a strong upcoming attack. The player should stack Parry attempts based on prior successful Parries at [02:13], [02:15], and [03:44], anticipating a heavy telegraphed hit."
+    },
+    {
+        "question": "What should the player do after 'Eveque attacks Gustave' at [04:39] reduces Gustave’s stability?",
+        "answer": "Since Gustave is hit at [04:39] and RECOVERY is known to restore 50 HP at [01:24], the player should deploy RECOVERY immediately to prevent Gustave from being dropped in the next Enraged cycle."
+    },
+    {
+        "question": "Given STAINS appear repeatedly between [03:20] and [05:54], what is the recommended long-term strategy?",
+        "answer": "STAINS accumulate steadily from [03:20] to [05:54]. Since STAINS come from casting skills, the strategy is to moderate casting frequency to avoid triggering unintended effects while maintaining offensive pressure."
+    },
+    {
+        "question": "What action should the player take when EVEQUE reaches 87/187 HP at [06:04]?",
+        "answer": "At 87/187 HP, EVEQUE is low. The player should use high burst options like OVERCHARGE (demonstrated at [04:10]) to finish the fight before the enemy recharges Overcharge themselves."
+    },
+    {
+        "question": "When Lune says 'Celebrate later. There'll be others.' at [06:29], what visual event does this correlate with?",
+        "answer": "The speech at [06:29] follows the VICTORY sequence from [06:12] to [06:19]. The correlation: Battle ends → Lune warns celebrations should wait."
+    },
+    {
+        "question": "Explain how the message about Maelle at [06:53] foreshadows the protocol dispute at [07:58].",
+        "answer": "The message at [06:53] indicates unusual circumstances. At [07:58], Lune insists on protocol, while Gustave challenges it. The sequence: Strange message → Conflicting protocol interpretations."
+    },
+    {
+        "question": "Track EVEQUE’s charge meter from [03:07] to [06:10].",
+        "answer": "Charge readings: 9/10 at [03:07], 10/10 at [04:06], 2/10 at [05:01], 5/10 from [05:56] to [06:10]. Pattern: Build → Max → Reset → Gradual buildup."
+    },
+    {
+        "question": "Summarize all Parry and Dodge events between [02:13] and [03:44].",
+        "answer": "Events: Parry at [02:13], PERFECT Parry at [02:15], Parry+Dodge at [02:13], Parry+Dodge again at [03:44]. Consistent defensive chain across encounter."
+    },
+    {
+        "question": "Summarize all IMMOLATION-related events between [01:52] and [05:28].",
+        "answer": "IMMOLATION cast at [01:52], repeat at [04:21], corrupted SIMMOLATION at [05:22], burn ticks at [05:28]. Pattern: Continuous fire pressure."
+    },
+    {
+        "question": "Summon all events involving Lune attacking EVEQUE.",
+        "answer": "Lune attacks with STAINS at [01:06], [01:08], [03:30], and [04:04]."
+    },
+    {
+        "question": "Explain how Weakness 403 at [04:25] interacts with BROKEN at [04:13].",
+        "answer": "BROKEN at [04:13] reduces defenses, Weakness at [04:25] increases damage taken. Combined: Stacked vulnerability window."
+    },
+    {
+        "question": "How does the Summon Minions event at [03:10] influence EVEQUE’s subsequent STAINS display at [03:20]?",
+        "answer": "Summoning requires casting. STAINS appear at [03:20] because casting skills generate STAINS as indicated earlier at [01:02]."
+    },
+    {
+        "question": "Analyze the player’s resource flow from HEALING LIGHT at [01:56] to the +65 Perfect heal at [02:00].",
+        "answer": "Select Heal → Perfect heal resolves. Timeline and causal links confirm the flow."
+    },
+    {
+        "question": "List all instances where EVEQUE directly attacks the player from [01:38] to [04:41].",
+        "answer": "Eveque attacks at [01:38], [01:40], [03:10] indirectly via summons, [04:39], and [04:41]."
+    },
+    {
+        "question": "Which timestamps show EVEQUE casting spells, and how do they align with STAINS gain?",
+        "answer": "Spells at [00:41], [02:07], [03:10], [05:22]. STAINS appears at [00:59], [03:20], [05:54]. Casting → STAINS."
+    },
+    {
+        "question": "How does the speech 'didn't have Floo!' at [01:58] correspond to the healing? ",
+        "answer": "The speech reflects confusion or urgency immediately before healing at [02:00]. Audio emotion aligns with healing timing."
+    },
+    {
+        "question": "What do the numerical hits (34 at [00:47], 27 at [00:51], 31 at [01:34]) reveal about early combat pacing?",
+        "answer": "Damage is small and frequent early, showing chip damage before major skills appear."
+    },
+    {
+        "question": "How do Parries at [04:41] and [04:47] reflect the player's adaptation during Enraged state?",
+        "answer": "Parries mitigate increased damage risk from Enraged at [04:27]."
+    },
+    {
+        "question": "How does the 'Eveque charges up.' event at [04:49] relate to Overcharge buildup afterward?",
+        "answer": "Charging typically precedes high-power moves. Overcharge indicators appear at [05:01], confirming buildup."
+    },
+    {
+        "question": "Summarize the final HP decline from [04:31] to [06:04].",
+        "answer": "EVEQUE shows 92/187 at [04:31], then 87/187 at [06:04], indicating sustained pressure and periodic damage."
+    },
+    {
+        "question": "Describe the relationship between repeated AIM selections and Overcharge use.",
+        "answer": "AIM appears at [01:10], [02:02], [03:26], [04:00], [04:06], [05:07]. These precede Overcharge events, showing target preparation."
+    },
+    {
+        "question": "Identify all STAINS explanations and what they mean for combat pacing.",
+        "answer": "STAINS explained at [01:02] and [01:04]: casting generates STAIN buildup. This dictates pacing for magic use."
+    },
+    {
+        "question": "How does the VICTORY sequence between [06:12] and [06:19] reflect battle resolution?",
+        "answer": "Sequential VICTORY indicators mark combat completion and transition to narrative dialogue at [06:23]."
+    },
+    {
+        "question": "Track dialogue escalation from the message on the wall at [06:53] to protocol debate at [08:29].",
+        "answer": "Message at [06:53] creates uncertainty → Lune questions origin [07:05] → Debate intensifies at [07:58] → Gustave issues ultimatum at [08:29]."
+    },
+    {
+        "question": "Summarize EVEQUE’s casting actions from [00:41] to [03:10].",
+        "answer": "Spell cast at [00:41], damage spells at [02:07], summon spell at [03:10]."
+    },
+    {
+        "question": "Explain the anomaly where 'SIMMOLATION' appears at [05:22] instead of IMMOLATION.",
+        "answer": "OCR distortion likely. Context and burn effect at [05:28] shows it’s the same fire attack."
+    },
+    {
+        "question": "List all healing actions between [01:24] and [02:00].",
+        "answer": "RECOVERY at [01:24], SMALL HEALING TINT at [01:28], HEALING LIGHT at [01:56], +65 heal at [02:00]."
+    },
+    {
+        "question": "What state transitions occur immediately after BROKEN at [04:13]?",
+        "answer": "States: 'No longer stunned' at [04:15] and [04:17], then IMMOLATION at [04:21]."
+    },
+    {
+        "question": "What does 'Eveque feels threatened' at [03:05] imply?",
+        "answer": "Indicates boss AI reacts to damage sustained around [03:03]."
+    },
+    {
+        "question": "Describe the visual progression between EVEQUE’s health bar appearances from [00:37] to [06:04].",
+        "answer": "Initially full at [00:37], progressively reduced until 87/187 at [06:04]."
+    }
+]

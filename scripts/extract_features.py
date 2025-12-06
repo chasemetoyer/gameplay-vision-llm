@@ -329,31 +329,284 @@ def run_internvideo_hico(frames: list[tuple[float, Image.Image]], device: str = 
 
 
 # =============================================================================
+# VideoMAE (Temporal Video Embeddings) - Works with transformers 5.x
+# =============================================================================
+
+def run_videomae_encoder(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
+    """
+    Extract temporal video embeddings using VideoMAE.
+    
+    VideoMAE provides 768-dim embeddings that capture temporal dynamics.
+    This is a working alternative to InternVideo HiCo for transformers 5.x.
+    
+    Returns dict with embeddings list containing timestamp and embedding tensors.
+    """
+    try:
+        from transformers import VideoMAEModel, VideoMAEImageProcessor
+        import torch
+        import numpy as np
+        
+        logger.info(f"Loading VideoMAE on {device}...")
+        processor = VideoMAEImageProcessor.from_pretrained("MCG-NJU/videomae-base")
+        model = VideoMAEModel.from_pretrained("MCG-NJU/videomae-base").to(device)
+        model.eval()
+        
+        # VideoMAE expects 16 frames per clip
+        clip_size = 16
+        embeddings = []
+        
+        # Process in clips of 16 frames
+        for clip_start in range(0, len(frames), clip_size):
+            clip_end = min(clip_start + clip_size, len(frames))
+            clip_frames = frames[clip_start:clip_end]
+            
+            # Pad if less than 16 frames
+            while len(clip_frames) < clip_size:
+                clip_frames.append(clip_frames[-1])
+            
+            # Convert to list of PIL images
+            pil_frames = [f[1].convert("RGB") for f in clip_frames]
+            
+            # Get timestamps
+            start_time = clip_frames[0][0]
+            end_time = clip_frames[-1][0] if clip_end <= len(frames) else frames[-1][0]
+            
+            # Process through VideoMAE
+            inputs = processor(pil_frames, return_tensors="pt")
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            with torch.no_grad():
+                outputs = model(**inputs)
+                # Get pooled output (768-dim)
+                embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0).cpu()
+            
+            embeddings.append({
+                "start_time": start_time,
+                "end_time": end_time,
+                "embedding": embedding,
+                "source_frame_count": len(clip_frames),
+            })
+        
+        logger.info(f"VideoMAE: {len(frames)} frames -> {len(embeddings)} clip embeddings (768-dim)")
+        
+        return {
+            "num_input_frames": len(frames),
+            "num_embeddings": len(embeddings),
+            "embeddings": embeddings,
+            "embedding_dim": 768,
+        }
+        
+    except Exception as e:
+        logger.warning(f"VideoMAE failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"num_input_frames": len(frames), "num_embeddings": 0, "embeddings": [], "embedding_dim": 768}
+
+
+# =============================================================================
+# Wav2Vec2-Large (Audio Embeddings) - Works with transformers 5.x
+# =============================================================================
+
+def run_wav2vec2_encoder(video_path: str, device: str = "cuda"):
+    """
+    Extract audio embeddings using Wav2Vec2-Large.
+    
+    Wav2Vec2-Large provides 1024-dim embeddings that capture audio features.
+    This replaces AudioMAE for projector training.
+    
+    Returns dict with embeddings list containing timestamp and embedding tensors.
+    """
+    try:
+        from transformers import Wav2Vec2Model, Wav2Vec2FeatureExtractor
+        import torch
+        import numpy as np
+        import subprocess
+        import tempfile
+        
+        logger.info(f"Loading Wav2Vec2-Large on {device}...")
+        # Use FeatureExtractor instead of Processor (no tokenizer needed for embeddings)
+        feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-large")
+        model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-large").to(device)
+        model.eval()
+        
+        # Extract audio from video
+        logger.info("Extracting audio from video...")
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vn", "-acodec", "pcm_s16le",
+            "-ar", "16000",  # Wav2Vec2 expects 16kHz
+            "-ac", "1",
+            tmp_path
+        ]
+        subprocess.run(cmd, capture_output=True, check=True)
+        
+        # Load audio
+        import librosa
+        audio, sr = librosa.load(tmp_path, sr=16000)
+        
+        import os
+        os.unlink(tmp_path)
+        
+        # Process in 30-second chunks
+        chunk_duration = 30.0
+        chunk_samples = int(chunk_duration * sr)
+        embeddings = []
+        
+        logger.info(f"Processing {len(audio)/sr:.1f}s audio in {chunk_duration}s chunks...")
+        
+        for chunk_start in range(0, len(audio), chunk_samples):
+            chunk_end = min(chunk_start + chunk_samples, len(audio))
+            chunk = audio[chunk_start:chunk_end]
+            
+            start_time = chunk_start / sr
+            end_time = chunk_end / sr
+            
+            # Process through Wav2Vec2
+            inputs = feature_extractor(chunk, sampling_rate=16000, return_tensors="pt", padding=True)
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            with torch.no_grad():
+                outputs = model(**inputs)
+                # Get mean pooled embedding (1024-dim)
+                embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0).cpu()
+            
+            embeddings.append({
+                "start_time": start_time,
+                "end_time": end_time,
+                "embedding": embedding,
+            })
+        
+        logger.info(f"Wav2Vec2: {len(audio)/sr:.1f}s audio -> {len(embeddings)} embeddings (1024-dim)")
+        
+        return {
+            "total_duration": len(audio) / sr,
+            "num_embeddings": len(embeddings),
+            "embeddings": embeddings,
+            "embedding_dim": 1024,
+        }
+        
+    except Exception as e:
+        logger.warning(f"Wav2Vec2 failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"total_duration": 0, "num_embeddings": 0, "embeddings": [], "embedding_dim": 1024}
+
+
+# =============================================================================
 # SigLIP 2 (Semantic Embeddings)
 # =============================================================================
 
-def run_siglip_encoder(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
-    """Run SigLIP2 on frames to get semantic embeddings."""
+def run_siglip_encoder(frames: list[tuple[float, Image.Image]], device: str = "cuda", 
+                       sam_results: list = None, entity_tracker = None):
+    """Run SigLIP2 on frames to get semantic embeddings.
+    
+    If sam_results and entity_tracker are provided, encodes SAM3 masked regions.
+    Otherwise, encodes full frames as fallback.
+    
+    Returns list of dicts with timestamp, embedding tensor, entity_type, and description.
+    """
     from perception.siglip_semantic_encoder import SigLIPSemanticEncoder, NaFlexConfig
+    import numpy as np
     
     config = NaFlexConfig(device=device)
     encoder = SigLIPSemanticEncoder(config)
     
     embeddings = []
-    for timestamp, frame in frames:
-        try:
-            # Encode full frame for now (Phase 1)
-            # In Phase 2, we will pass SAM masks here
-            embedding = encoder.encode_image(frame)
-            if embedding is not None:
-                embeddings.append({
-                    "timestamp": timestamp,
-                    "embedding_shape": list(embedding.shape),
-                })
-        except Exception as e:
-            logger.warning(f"SigLIP failed at {timestamp:.1f}s: {e}")
     
-    logger.info(f"SigLIP encoded {len(embeddings)} frames")
+    # If we have SAM results, encode masked regions
+    if sam_results and entity_tracker:
+        logger.info("Encoding SAM3 masked regions with SigLIP...")
+        
+        # Group detections by timestamp
+        detections_by_time = {}
+        for det in sam_results:
+            ts = det.get("timestamp", 0)
+            if ts not in detections_by_time:
+                detections_by_time[ts] = []
+            detections_by_time[ts].append(det)
+        
+        for idx, (timestamp, frame) in enumerate(frames):
+            frame_np = np.array(frame.convert("RGB"))
+            frame_dets = detections_by_time.get(timestamp, [])
+            
+            if not frame_dets:
+                # No SAM detections for this frame - encode full frame
+                try:
+                    embedding = encoder.encode_image(frame)
+                    if embedding is not None:
+                        embeddings.append({
+                            "timestamp": timestamp,
+                            "embedding": embedding.cpu(),
+                            "embedding_shape": list(embedding.shape),
+                            "entity_type": "full_frame",
+                            "description": "Full frame encoding (no SAM detection)",
+                        })
+                except Exception as e:
+                    logger.warning(f"SigLIP full-frame failed at {timestamp:.1f}s: {e}")
+                continue
+            
+            # Create masks from bounding boxes for each detection
+            for det in frame_dets:
+                bbox = det.get("bbox")
+                entity_type = det.get("entity_type", "unknown")
+                entity_id = det.get("entity_id", f"{entity_type}_{timestamp}")
+                description = det.get("description", f"Detected {entity_type}")
+                
+                if bbox is None:
+                    continue
+                
+                try:
+                    # Create mask from bbox
+                    x1, y1, x2, y2 = [int(c) for c in bbox]
+                    mask = np.zeros(frame_np.shape[:2], dtype=np.bool_)
+                    mask[y1:y2, x1:x2] = True
+                    
+                    # Encode masked region
+                    region_embeddings = encoder.encode_masked_regions(
+                        frame_np, 
+                        [(entity_id, mask)]
+                    )
+                    
+                    if region_embeddings:
+                        emb = region_embeddings[0]
+                        embeddings.append({
+                            "timestamp": timestamp,
+                            "embedding": emb.embedding.cpu(),
+                            "embedding_shape": list(emb.embedding.shape),
+                            "entity_type": entity_type,
+                            "entity_id": entity_id,
+                            "description": description,
+                            "bbox": bbox,
+                        })
+                except Exception as e:
+                    logger.warning(f"SigLIP mask encoding failed for {entity_type} at {timestamp:.1f}s: {e}")
+            
+            if idx % 20 == 0:
+                logger.info(f"SigLIP encoded frame {idx}/{len(frames)} ({len(embeddings)} total embeddings)")
+    
+    else:
+        # Fallback: encode full frames
+        logger.info("No SAM results - encoding full frames with SigLIP...")
+        for idx, (timestamp, frame) in enumerate(frames):
+            try:
+                embedding = encoder.encode_image(frame)
+                if embedding is not None:
+                    embeddings.append({
+                        "timestamp": timestamp,
+                        "embedding": embedding.cpu(),
+                        "embedding_shape": list(embedding.shape),
+                        "entity_type": "full_frame",
+                        "description": "Full frame encoding",
+                    })
+                    if idx % 20 == 0:
+                        logger.info(f"SigLIP encoded frame {idx}/{len(frames)}")
+            except Exception as e:
+                logger.warning(f"SigLIP failed at {timestamp:.1f}s: {e}")
+    
+    logger.info(f"SigLIP encoded {len(embeddings)} regions with tensors")
     return embeddings
 
 
@@ -1074,7 +1327,7 @@ def main():
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--use-sam", action="store_true", help="Use SAM 3 for advanced entity detection")
     parser.add_argument("--skip-audio", action="store_true", help="Skip audio processing (faster)")
-    parser.add_argument("--skip-hico", action="store_true", help="Skip InternVideo HiCo (faster)")
+    parser.add_argument("--skip-hico", action="store_true", default=True, help="Skip legacy InternVideo HiCo (default: True, use VideoMAE instead)")
     parser.add_argument("--max-frames", type=int, default=0, help="Max frames to process (0=all, for quick testing)")
     args = parser.parse_args()
     
@@ -1098,12 +1351,13 @@ def main():
         logger.info(f"Limiting to {args.max_frames} frames for testing (was {len(frames)})")
         frames = frames[:args.max_frames]
     
-    # Step 2: Run InternVideo2.5 HiCo (Temporal Compression)
+    # Step 2: Legacy InternVideo2.5 HiCo (skipped by default - use VideoMAE instead)
+    # HiCo doesn't work well with transformers 5.x, VideoMAE is the replacement
     if not args.skip_hico:
-        logger.info("Step 2/8: Running InternVideo2.5 HiCo...")
+        logger.info("Step 2/8: Running legacy InternVideo2.5 HiCo (may fail with transformers 5.x)...")
         hico_results = run_internvideo_hico(frames, device=args.device)
     else:
-        logger.info("Step 2/8: Skipping HiCo (--skip-hico flag)")
+        logger.info("Step 2/8: Skipping legacy HiCo (using VideoMAE for temporal embeddings instead)")
         hico_results = {"num_input_frames": len(frames), "num_temporal_tokens": 0, "tokens": None}
     
     # Step 3: Run visual detection (SAM or Motion) - MUST run before OCR
@@ -1116,16 +1370,27 @@ def main():
     ocr_results = run_ocr(frames, device="cpu")  # Force CPU regardless of args.device
     
     # Step 5: Run SigLIP (Semantic Embeddings)
+    # Pass SAM results to encode masked regions when --use-sam is enabled
     logger.info("Step 5/8: Running SigLIP Encoder...")
-    siglip_results = run_siglip_encoder(frames, device=args.device)
+    sam_results_for_siglip = visual_results if args.use_sam else None
+    siglip_results = run_siglip_encoder(frames, device=args.device, sam_results=sam_results_for_siglip)
     
-    # Step 6: Run Audio Extraction
+    # Step 5b: Run VideoMAE for temporal video embeddings (768-dim)
+    logger.info("Step 5b: Running VideoMAE Encoder (temporal embeddings)...")
+    videomae_results = run_videomae_encoder(frames, device=args.device)
+    
+    # Step 6: Run Audio Extraction (text transcription for timeline)
     if not args.skip_audio:
         logger.info("Step 6/8: Running Audio Extraction...")
         audio_results = run_audio_extraction(args.video, device=args.device)
+        
+        # Step 6b: Run Wav2Vec2 for audio embeddings (1024-dim)
+        logger.info("Step 6b: Running Wav2Vec2 Encoder (audio embeddings)...")
+        wav2vec_results = run_wav2vec2_encoder(args.video, device=args.device)
     else:
         logger.info("Step 6/8: Skipping audio (--skip-audio flag)")
         audio_results = []
+        wav2vec_results = {"total_duration": 0, "num_embeddings": 0, "embeddings": [], "embedding_dim": 1024}
     
     # Step 7: Build timeline using TimelineIndexer
     logger.info("Step 7/8: Building timeline with TimelineIndexer...")
@@ -1162,6 +1427,53 @@ def main():
             ]
         }, f, indent=2)
     logger.info(f"Saved: {output_json}")
+    
+    # Save SigLIP embeddings as tensor file for projector training
+    output_embeddings = os.path.join(args.output, f"{video_name}_embeddings.pt")
+    import torch
+    # Build HiCo embeddings list from TemporalToken objects (if available)
+    hico_embeddings = []
+    if hico_results.get("tokens"):
+        for token in hico_results["tokens"]:
+            if hasattr(token, "embedding") and token.embedding is not None:
+                hico_embeddings.append({
+                    "start_time": token.start_time,
+                    "end_time": token.end_time,
+                    "embedding": token.embedding.cpu() if hasattr(token.embedding, 'cpu') else token.embedding,
+                    "compression_level": token.compression_level.value if hasattr(token.compression_level, 'value') else str(token.compression_level),
+                    "source_frame_count": token.source_frame_count,
+                })
+    
+    embedding_data = {
+        # SigLIP embeddings (1152-dim) - for visual region projector
+        "siglip": [{
+            "timestamp": s["timestamp"],
+            "embedding": s["embedding"],  # Actual tensor
+            "shape": s["embedding_shape"],
+        } for s in siglip_results if "embedding" in s],
+        
+        # VideoMAE embeddings (768-dim) - for temporal video projector (transformers 5.x compatible)
+        "videomae": videomae_results.get("embeddings", []),
+        
+        # Wav2Vec2 embeddings (1024-dim) - for audio projector (transformers 5.x compatible)
+        "wav2vec2": wav2vec_results.get("embeddings", []),
+        
+        # Legacy HiCo embeddings (1408-dim) - if InternVideo loads
+        "hico": hico_embeddings,
+        
+        # Text descriptions for pairing during projector training
+        "visual_events": visual_results,
+        "audio_transcripts": audio_results,
+    }
+    torch.save(embedding_data, output_embeddings)
+    
+    siglip_count = len(embedding_data['siglip'])
+    videomae_count = len(embedding_data['videomae'])
+    wav2vec_count = len(embedding_data['wav2vec2'])
+    hico_count = len(embedding_data['hico'])
+    logger.info(f"Saved embeddings: {output_embeddings}")
+    logger.info(f"  SigLIP (1152-dim): {siglip_count}, VideoMAE (768-dim): {videomae_count}")
+    logger.info(f"  Wav2Vec2 (1024-dim): {wav2vec_count}, HiCo (1408-dim): {hico_count}")
     
     # Save GPT-ready text
     output_txt = os.path.join(args.output, f"{video_name}_context.txt")

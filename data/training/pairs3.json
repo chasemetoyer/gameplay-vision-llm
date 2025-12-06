@@ -1,0 +1,194 @@
+[
+    {
+        "question": "What is the earliest confirmed narrative event in the footage and which modality provides it?",
+        "answer": "The earliest narrative event comes from the OCR at [00:00], which displays the rating content 'TEEN' and 'Use of Alcohol'. This establishes the opening context before any dialogue or visual detection occurs."
+    },
+    {
+        "question": "How does the player learn that the footage is not final quality, and at what timestamp does this appear?",
+        "answer": "OCR at [04.0] explicitly states 'The following footage is captured in-game and does not represent the final quality', grounding the disclaimer in text before any major plot dialogue begins."
+    },
+    {
+        "question": "What question does Gwendolyn ask regarding Lamorak at [20.0], and which modality records it?",
+        "answer": "OCR at [20.0] records the line 'Gwendolyn: Is this a memory from Lamorak's past?', indicating she is uncertain whether the scene reflects historical memory."
+    },
+    {
+        "question": "What statement at [28.0] reveals Tyronoe's suspicion about Lamorak's knights?",
+        "answer": "OCR at [28.0] shows 'Tyronoe: We thought all his knights were dead.', suggesting surprise at encountering another knight from Lamorak."
+    },
+    {
+        "question": "Which multimodal cues at [30.0] confirm the presence of both a character and an enemy?",
+        "answer": "At [30.0], visual detection identifies a 'Detected character' and 'Detected enemy', while OCR simultaneously shows Tyronoe speaking, confirming both entities through combined modalities."
+    },
+    {
+        "question": "How does Tyronoe justify destruction at [48.0], and which modality reports it?",
+        "answer": "OCR at [48.0] shows Tyronoe declaring 'That destruction is in fact salvation.', making his justification visible as on-screen text rather than spoken audio."
+    },
+    {
+        "question": "What emotional cue does Gwendolyn provide at [54.0], and how is it captured?",
+        "answer": "OCR at [54.0] displays 'Gwendolyn: You're insane.', showing clear emotional rejection rendered in text format."
+    },
+    {
+        "question": "What contradictory information appears between Gwendolyn and Tyronoe in the dialogue between [42.0] and [58.0]?",
+        "answer": "Gwendolyn asks 'You destroyed the Whitelands?' at [42.0], while Tyronoe refutes her understanding with 'You know not of what you speak.' at [58.0], creating a conflict between their interpretations."
+    },
+    {
+        "question": "How does the speech at [59.0] introduce a new threat, and what multimodal information supports this?",
+        "answer": "Speech at [59.0] states 'Set your defeat. Beware! Number 9! She's created another folded realm.' Combined with prior OCR references to folded realms at [74.0], this indicates a spatial distortion threat."
+    },
+    {
+        "question": "What is the first timestamp where 'Tyronoe, The Ferryman' appears, and through which modality?",
+        "answer": "OCR at [62.0] displays 'Tyronoe, The Ferryman', marking his formal title during the encounter."
+    },
+    {
+        "question": "What strategic clue does Lamorak provide at [80.0] about crossing folded realms?",
+        "answer": "OCR at [80.0] shows 'We cannot cross two folded realms, but the spear... CAN!', meaning the spear is the key mechanic to bypass realm barriers."
+    },
+    {
+        "question": "Based on events between [74.0] and [86.0], why is the spear critical for progression?",
+        "answer": "The CoT chain is: Gwendolyn detects 'another Folded Realm' at [74.0] → Lamorak explains realms cannot be crossed normally at [80.0] → he commands 'Take the spear!' at [86.0]. This sequence explicitly links the spear to traversal capability."
+    },
+    {
+        "question": "How is Tyronoe’s transformation indicated at [98.0]?",
+        "answer": "OCR at [98.0] shows Gwendolyn saying 'She's human again!', suggesting a significant state shift for the opponent."
+    },
+    {
+        "question": "What combined audio and text cues at [106.0] indicate Tyronoe acknowledges the player’s capabilities?",
+        "answer": "OCR at [106.0] shows 'It seems you do have the capacity to surprise us.', while speech around this moment includes similar phrasing, confirming recognition through both modalities."
+    },
+    {
+        "question": "How does Tyronoe reaffirm unwavering resolve at [118.0]?",
+        "answer": "OCR at [118.0] states 'But not enough to change our directive.', meaning the Ferryman remains committed despite setbacks."
+    },
+    {
+        "question": "What evidence at [136.0] suggests a new ally has joined, and how should the player interpret this narratively?",
+        "answer": "OCR at [136.0] shows 'Even with your new... ally', implying reinforcements have arrived. This should be interpreted as a shift toward multi-character coordination."
+    },
+    {
+        "question": "How does Tyronoe escalate the confrontation at [140.0]?",
+        "answer": "OCR at [140.0] shows 'We end this. Here.', marking a decisive escalation toward fight conclusion."
+    },
+    {
+        "question": "Which multimodal cues at [147.5] indicate a cooperative battle phase beginning?",
+        "answer": "Speech at [147.5] includes 'Enemy of my enemy, I lend you my strength. We fight as one.' paired with OCR at [150.0] showing 'Enemy of my enemy', confirming an alliance phase."
+    },
+    {
+        "question": "What is the primary thematic conflict expressed between [176.0] and [186.0]?",
+        "answer": "Lamorak demands 'You will not escape justice!' at [176.0], while Tyronoe counters with 'There is only the King's will' at [184.0], showing a moral conflict between justice and obedience."
+    },
+    {
+        "question": "What does the OCR at [194.0] reveal about Gwendolyn’s emotional state?",
+        "answer": "At [194.0] OCR captures 'Gwendolyn: Go to hell!', reflecting anger or desperation during combat."
+    },
+    {
+        "question": "How does the speech at [206.5] differ from earlier Tyronoe statements, and what narrative tone does it convey?",
+        "answer": "The speech at [206.5] includes fragmented metaphors like 'Fullers night, I will finish her' and ‘agony of truth’, adding surreal, prophetic undertones not present earlier."
+    },
+    {
+        "question": "What recurring theme appears in Tyronoe’s OCR lines between [218.0] and [222.0]?",
+        "answer": "OCR repeatedly displays 'Faced with the agony of truth, you choose the comfort of lies.', making truth versus deception an explicit motif."
+    },
+    {
+        "question": "Which line at [234.0] connects loyalty to betrayal, and what modality captures it?",
+        "answer": "OCR at [234.0] shows 'Loyalty without inquiry is itself a betrayal.', suggesting blind obedience is dangerous."
+    },
+    {
+        "question": "How does the speech at [236.0] reinforce the theme from [234.0]?",
+        "answer": "Speech at [236.0] states 'Your loyalty has condemned this man.', directly tying loyalty to destructive outcomes as introduced at [234.0]."
+    },
+    {
+        "question": "How does the visual detection at [6.0] support narrative setup?",
+        "answer": "Detected character, enemy, and weapon at [6.0] establish early combat-relevant entities even before major dialogue appears."
+    },
+    {
+        "question": "How do the entity detections at [10.0] suggest overlapping characters and enemies?",
+        "answer": "At [10.0], both a character and an enemy share extremely similar bounding boxes, suggesting a close-quarters confrontation or mirrored models."
+    },
+    {
+        "question": "What pattern in visual detections between [12.0] and [18.0] indicates growing combat density?",
+        "answer": "Each timestamp introduces multiple characters, weapons, and enemies, showing rising numbers of entities, consistent with a large-scale battle environment."
+    },
+    {
+        "question": "At which timestamp does the title card 'ECLIPSE GLOW GAMES' appear, and how is it presented?",
+        "answer": "OCR at [06.0] presents 'ECLIPSE GLOW GAMES', marking a studio credit."
+    },
+    {
+        "question": "How does Gwendolyn’s line at [74.0] connect to prior speech at [59.0]?",
+        "answer": "Speech at [59.0] mentions 'another folded realm', and OCR at [74.0] states 'She's created another Folded Realm.' This confirms verbal and visual alignment describing spatial distortion."
+    },
+    {
+        "question": "How does the sequence from [59.0] to [80.0] create a causal chain explaining the folded realms?",
+        "answer": "Speech at [59.0] introduces the creation of a new folded realm → OCR at [74.0] confirms it has manifested → OCR at [80.0] reveals the spear can bypass realm limits. This forms a stepwise causal explanation for the spear’s importance."
+    },
+    {
+        "question": "What strategic advice should the player follow after OCR at [80.0] mentions the spear?",
+        "answer": "Since the spear is the only object capable of crossing two folded realms, the player should immediately retrieve or equip it to progress through blocked terrain."
+    },
+    {
+        "question": "What conflict is sparked between Gwendolyn and Tyronoe at [54.0] and [58.0]?",
+        "answer": "Gwendolyn’s accusation 'You're insane' at [54.0] is countered by Tyronoe’s 'You know not of what you speak' at [58.0], forming a verbal clash about truth and motive."
+    },
+    {
+        "question": "What visual evidence at [62.0] indicates the boss fight phase?",
+        "answer": "At [62.0], visual detection shows a health bar alongside 'Tyronoe, The Ferryman', confirming boss-level combat begins here."
+    },
+    {
+        "question": "What is the significance of the line 'We fight as one' at [156.0]?",
+        "answer": "OCR at [156.0] reveals coordinated teamwork, marking a shift from solo protagonist combat to multi-character synergy."
+    },
+    {
+        "question": "How do the OCR entries between [176.0] and [186.0] illustrate ideological conflict?",
+        "answer": "Lamorak’s line at [176.0] invokes justice, while Tyronoe’s lines at [184.0] and [186.0] invoke 'the King's will', representing law versus obedience as opposing ideals."
+    },
+    {
+        "question": "How does the visual data at [186.0] support ongoing combat?",
+        "answer": "Detected character and health bar at [186.0] confirm active combat is still underway when major ideological statements occur."
+    },
+    {
+        "question": "How is Gwendolyn’s determination expressed at [194.0]?",
+        "answer": "OCR at [194.0] shows 'Go to hell!', demonstrating defiant resolve despite conflict."
+    },
+    {
+        "question": "What shift at [206.5] suggests the battle is nearing a dramatic turning point?",
+        "answer": "Speech at [206.5] uses apocalyptic phrasing like 'I will finish her' and 'agony of truth', indicating heightened stakes and impending climax."
+    },
+    {
+        "question": "What is the thematic significance of 'Your loyalty has condemned this land' at [256.0]?",
+        "answer": "OCR at [256.0] ties personal moral failure to large-scale destruction, reinforcing the narrative theme of misguided loyalty."
+    },
+    {
+        "question": "How do the OCR lines at [298.0] and [300.0] conclude the footage?",
+        "answer": "Both timestamps show 'IDES OF NNIHILATION' and 'WISHLIST NOW', signaling a promotional end-card for the game."
+    },
+    {
+        "question": "What strategic move should the player make when a folded realm appears at [74.0]?",
+        "answer": "Since folded realms block traversal, the player should locate and use the spear mentioned at [80.0]–[86.0] to bypass dimensional barriers."
+    },
+    {
+        "question": "What enemy behavior is implied by repeated visual detections of enemies alongside characters from [6.0]–[50.0]?",
+        "answer": "The overlap of bounding boxes suggests persistent melee engagement, indicating the player should maintain mobility and avoid clustered positions."
+    },
+    {
+        "question": "Which timestamp marks the clearest narrative reveal of Tyronoe’s ideology?",
+        "answer": "[184.0] shows 'There is only the King's will', giving the clearest statement of Tyronoe’s worldview."
+    },
+    {
+        "question": "How does the dialogue between [218.0] and [234.0] critique blind loyalty?",
+        "answer": "OCR at [218.0] accuses the player of choosing comforting lies, while [234.0] states 'Loyalty without inquiry is itself a betrayal.' Together, they condemn unexamined allegiance."
+    },
+    {
+        "question": "What final narrative tone is established by speech at [295.0]?",
+        "answer": "Speech at [295.0] references the scene being 'better than expected', creating a reflective, almost meta-commentary tone before the title card."
+    },
+    {
+        "question": "What is the role of Lamorak in the final alliance phase?",
+        "answer": "OCR at [150.0] and [152.0] show Lamorak saying 'Enemy of my enemy' and 'I lend you my strength', confirming his active combat support."
+    },
+    {
+        "question": "Which timestamp shows the largest cluster of overlapping detections, and what does it imply?",
+        "answer": "[30.0] shows character, enemy, and weapon detections overlapping with dialogue, implying a transition from narrative to active combat."
+    },
+    {
+        "question": "What should the player prioritize after hearing 'Beware! Number 9!' at [59.0]?",
+        "answer": "The player should anticipate a high-threat entity, likely linked to folded realm creation, and prepare defensive maneuvers or realm traversal tools."
+    }
+]
