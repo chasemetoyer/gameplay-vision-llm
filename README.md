@@ -375,4 +375,4 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 
 ## License
 
-Apache 2.0
+MIT License
