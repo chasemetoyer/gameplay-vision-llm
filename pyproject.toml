@@ -1,0 +1,74 @@
+[project]
+name = "gameplay-vision-llm"
+version = "0.1.0"
+description = "Multi-modal video LLM for gameplay analysis with SAM3, OCR, and Qwen3-VL reasoning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    # Core ML/DL
+    "torch>=2.0.0",
+    "torchvision",
+    "torchaudio",
+    "transformers>=4.40.0",
+    "accelerate>=1.0.0",
+    "safetensors",
+    
+    # LoRA / Fine-tuning
+    "peft>=0.10.0",
+    "bitsandbytes>=0.40.0",
+    "datasets>=2.0.0",
+    "trl>=0.7.0",
+    
+    # Vision
+    "opencv-python-headless>=4.6.0",
+    "pillow>=10.0.0",
+    "decord>=0.6.0",
+    "scikit-image",
+    
+    # OCR
+    "paddlepaddle==2.6.2",  # CPU-only to avoid CUDNN conflicts
+    "paddleocr>=2.7.0",
+    
+    # Audio
+    "openai-whisper",
+    "librosa>=0.10.0",
+    "soundfile",
+    
+    # ML utilities
+    "sentence-transformers>=2.0.0",
+    "scikit-learn",
+    "numpy>=1.20.0",
+    "scipy",
+    
+    # Data processing
+    "pandas",
+    "pyarrow",
+    "tqdm",
+    "pyyaml",
+    
+    # HTTP/API
+    "httpx",
+    "requests",
+    "huggingface_hub>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+    "ipython",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+    "black",
+    "ruff",
+]
