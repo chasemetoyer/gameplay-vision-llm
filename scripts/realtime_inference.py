@@ -229,6 +229,160 @@ def run_sam3_detection(frames: list[tuple[float, Image.Image]], device: str = "c
         return [{"timestamp": t, "frame": f, "detections": []} for t, f in frames]
 
 
+def detect_important_frames(
+    videomae_embeddings: list[dict],
+    motion_threshold: float = 0.3,
+    always_include_first: bool = True,
+) -> set[int]:
+    """
+    Detect important frames using VideoMAE embedding temporal differences.
+    
+    Frames with significant motion or scene changes are marked as important
+    and will be processed by SAM3. Other frames are skipped to save time.
+    
+    Args:
+        videomae_embeddings: List of VideoMAE embedding dicts with 'embedding' key
+        motion_threshold: Cosine distance threshold for detecting motion
+        always_include_first: Always include first frame for baseline
+        
+    Returns:
+        Set of important frame indices
+    """
+    import torch.nn.functional as F
+    
+    if not videomae_embeddings:
+        return set()
+    
+    important_indices = set()
+    
+    if always_include_first:
+        important_indices.add(0)
+    
+    # Compare consecutive embeddings
+    for i in range(1, len(videomae_embeddings)):
+        prev_emb = videomae_embeddings[i - 1].get("embedding")
+        curr_emb = videomae_embeddings[i].get("embedding")
+        
+        if prev_emb is None or curr_emb is None:
+            continue
+        
+        # Ensure tensors are on same device
+        if not isinstance(prev_emb, torch.Tensor):
+            prev_emb = torch.tensor(prev_emb)
+        if not isinstance(curr_emb, torch.Tensor):
+            curr_emb = torch.tensor(curr_emb)
+        
+        # Flatten for cosine similarity
+        prev_flat = prev_emb.flatten().unsqueeze(0).float()
+        curr_flat = curr_emb.flatten().unsqueeze(0).float()
+        
+        # Cosine distance (1 - similarity)
+        similarity = F.cosine_similarity(prev_flat, curr_flat, dim=1).item()
+        distance = 1.0 - similarity
+        
+        if distance > motion_threshold:
+            important_indices.add(i)
+            # Also mark the previous frame for context
+            important_indices.add(i - 1)
+    
+    logger.info(f"Motion detector: {len(important_indices)}/{len(videomae_embeddings)} frames marked as important")
+    return important_indices
+
+
+def run_cascaded_sam3_detection(
+    frames: list[tuple[float, Image.Image]],
+    important_indices: set[int],
+    device: str = "cuda",
+) -> list[dict]:
+    """
+    Run SAM3 detection only on important frames using cascaded processing.
+    
+    This dramatically reduces processing time by skipping SAM3 on frames
+    with low motion or importance.
+    
+    Args:
+        frames: List of (timestamp, frame) tuples
+        important_indices: Set of indices to process with SAM3
+        device: Computation device
+        
+    Returns:
+        List of detection dicts for all frames (empty detections for skipped frames)
+    """
+    try:
+        from perception.sam_concept_segmenter import SAMConceptSegmenter, SAMConfig
+        import numpy as np
+        
+        logger.info(f"Cascaded SAM3: Processing {len(important_indices)}/{len(frames)} important frames...")
+        config = SAMConfig(device=device)
+        segmenter = SAMConceptSegmenter(config)
+        
+        concepts = ["player", "enemy", "boss", "health bar", "weapon", "character", "object"]
+        all_detections = []
+        
+        important_frames = [(i, frames[i]) for i in sorted(important_indices) if i < len(frames)]
+        
+        for i, (timestamp, frame) in tqdm(
+            enumerate(frames), 
+            desc="Cascaded SAM3",
+            total=len(frames),
+        ):
+            if i in important_indices:
+                # Full SAM3 detection on important frames
+                frame_np = np.array(frame)
+                frame_idx = int(timestamp * 10)
+                
+                try:
+                    entities = segmenter.segment_with_prompts(
+                        frame=frame_np,
+                        frame_idx=frame_idx,
+                        concept_prompts=concepts,
+                    )
+                    
+                    detections = []
+                    for entity in entities:
+                        detections.append({
+                            "timestamp": timestamp,
+                            "label": entity.label if hasattr(entity, 'label') else "entity",
+                            "confidence": entity.confidence if hasattr(entity, 'confidence') else 0.8,
+                            "bbox": entity.bbox if hasattr(entity, 'bbox') else None,
+                            "mask": entity.frame_masks.get(frame_idx) if hasattr(entity, 'frame_masks') else None,
+                        })
+                    
+                    all_detections.append({
+                        "timestamp": timestamp,
+                        "frame": frame,
+                        "detections": detections,
+                    })
+                except Exception as e:
+                    logger.debug(f"SAM3 detection failed at {timestamp:.1f}s: {e}")
+                    all_detections.append({
+                        "timestamp": timestamp,
+                        "frame": frame,
+                        "detections": [],
+                    })
+            else:
+                # Skip SAM3 on non-important frames
+                all_detections.append({
+                    "timestamp": timestamp,
+                    "frame": frame,
+                    "detections": [],
+                    "skipped": True,
+                })
+        
+        total_detections = sum(len(d["detections"]) for d in all_detections)
+        processed_count = len(important_indices)
+        skipped_count = len(frames) - processed_count
+        logger.info(f"Cascaded SAM3: {total_detections} detections, processed {processed_count} frames, skipped {skipped_count}")
+        return all_detections
+        
+    except ImportError as e:
+        logger.warning(f"SAM3 not available: {e}")
+        return [{"timestamp": t, "frame": f, "detections": []} for t, f in frames]
+    except Exception as e:
+        logger.warning(f"Cascaded SAM3 failed: {e}")
+        return [{"timestamp": t, "frame": f, "detections": []} for t, f in frames]
+
+
 # =============================================================================
 # Embedding Extraction
 # =============================================================================
@@ -626,6 +780,7 @@ def process_video(
     device: str = "cuda",
     fps: float = 0.5,
     use_sam: bool = True,
+    cascaded: bool = False,
     projector_weights: str = "outputs/projector_weights.pt",
     lora_path: str = "outputs/lora_adapter",
 ):
@@ -639,34 +794,49 @@ def process_video(
     
     logger.info("=" * 60)
     logger.info("PROCESSING VIDEO")
+    if cascaded:
+        logger.info("Mode: CASCADED (SAM3 on important frames only)")
     logger.info("=" * 60)
     
     # 1. Extract frames
     logger.info("\n1. Extracting frames...")
     frames = extract_frames(video_path, fps=fps)
     
-    # 2. Run SAM3 detection (if enabled)
+    # 2. For cascaded processing, extract VideoMAE FIRST to detect important frames
     sam_results = None
-    if use_sam:
-        logger.info("\n2a. Running SAM3 visual detection...")
+    if use_sam and cascaded:
+        logger.info("\n2a. Extracting VideoMAE for motion detection...")
+        videomae_embs = extract_videomae_embeddings(frames, device)
+        
+        logger.info("\n2b. Detecting important frames...")
+        important_indices = detect_important_frames(videomae_embs, motion_threshold=0.3)
+        
+        logger.info("\n2c. Running cascaded SAM3 on important frames...")
+        sam_results = run_cascaded_sam3_detection(frames, important_indices, device)
+    elif use_sam:
+        logger.info("\n2a. Running SAM3 visual detection (all frames)...")
         sam_results = run_sam3_detection(frames, device)
+        videomae_embs = None  # Will extract later
+    else:
+        videomae_embs = None
     
-    # 3. Extract embeddings
-    logger.info("\n2b. Extracting multimodal embeddings...")
+    # 3. Extract embeddings (skip VideoMAE if already done for cascaded)
+    logger.info("\n3. Extracting multimodal embeddings...")
     siglip_embs = extract_siglip_embeddings(frames, sam_results=sam_results, device=device)
-    videomae_embs = extract_videomae_embeddings(frames, device)
+    if videomae_embs is None:
+        videomae_embs = extract_videomae_embeddings(frames, device)
     wav2vec_embs = extract_wav2vec_embeddings(video_path, device)
     
     # 4. Run OCR extraction
-    logger.info("\n3. Extracting text (OCR)...")
+    logger.info("\n4. Extracting text (OCR)...")
     ocr_results = run_ocr_extraction(frames, device)
     
     # 5. Run speech transcription
-    logger.info("\n4. Transcribing speech (Whisper)...")
+    logger.info("\n5. Transcribing speech (Whisper)...")
     speech_results = run_speech_transcription(video_path, device)
     
     # 6. Build timeline index
-    logger.info("\n5. Building timeline index...")
+    logger.info("\n6. Building timeline index...")
     timeline_indexer = build_timeline_index(ocr_results, speech_results, sam_results)
     
     # 7. Initialize loop with projectors and timeline
@@ -821,6 +991,8 @@ def main():
                         help="Path to LoRA adapter")
     parser.add_argument("--output-dir", default="data/videos",
                         help="Directory for downloaded videos")
+    parser.add_argument("--cascaded", action="store_true",
+                        help="Enable cascaded processing (skip SAM3 on low-importance frames)")
     
     args = parser.parse_args()
     
@@ -840,6 +1012,7 @@ def main():
         device=args.device,
         fps=args.fps,
         use_sam=args.use_sam,
+        cascaded=args.cascaded,
         projector_weights=args.projector_weights,
         lora_path=args.lora_path,
     )
