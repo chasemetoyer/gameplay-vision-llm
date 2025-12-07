@@ -1,35 +1,77 @@
 # Requirements for Mac (Apple Silicon) with MLX
+# =============================================
 # Optimized for M1/M2/M3/M4 Macs with 24GB+ unified memory
-# Uses 4-bit quantized models for efficient inference
+# 
+# PYTHON VERSION: 3.10 or 3.11 recommended (3.12 may have issues with some packages)
+#
+# SETUP INSTRUCTIONS:
+#   1. brew install python@3.11 ffmpeg
+#   2. python3.11 -m venv venv
+#   3. source venv/bin/activate
+#   4. pip install --upgrade pip
+#   5. pip install -r requirements-mac.txt
 
-# MLX framework for Apple Silicon
+# ===================
+# MLX (Apple Silicon)
+# ===================
 mlx>=0.20.0
 mlx-vlm>=0.1.0  # Vision-language models for MLX
 
-# Core dependencies (same as main)
-torch>=2.0.0  # Will use MPS backend on Mac
+# ===================
+# PyTorch (MPS backend)
+# ===================
+# NOTE: On Mac, PyTorch will automatically use MPS (Metal) for GPU acceleration
+torch>=2.0.0
 torchvision
+torchaudio
+
+# ===================
+# Core dependencies
+# ===================
 Pillow>=10.0.0
 numpy>=1.24.0
 tqdm
 pyyaml
+transformers>=4.40.0
+huggingface_hub
 
+# ===================
 # Video processing
+# ===================
 opencv-python>=4.8.0
 
+# ===================
 # Audio processing
+# ===================
 openai-whisper>=20231117
 
-# OCR (CPU-only for Mac)
-paddlepaddle  # CPU version
+# ===================
+# OCR - PaddleOCR
+# ===================
+# NOTE: On Mac, use CPU version of PaddlePaddle
+# Install separately if pip fails:
+#   pip install paddlepaddle
+#   pip install paddleocr
+paddlepaddle
 paddleocr>=2.7.0
 
-# Text processing
+# ===================
+# Embeddings
+# ===================
 sentence-transformers>=2.2.0
 
-# Optional: for Gradio web interface
+# ===================
+# Optional: Web UI
+# ===================
 gradio>=4.0.0
 
-# Note: On Mac, run these commands after installing:
-# 1. pip install -r requirements-mac.txt
-# 2. The first run will download the MLX model (~4GB for 4-bit Qwen)
+# ===================
+# First Run Notes
+# ===================
+# After installing, the first run will download:
+# - MLX Qwen3-VL model (~4GB)
+# - SigLIP model (~2GB)
+# - VideoMAE model (~1GB)
+# - Whisper base model (~150MB)
+# Total: ~7-8GB of model downloads
+
