@@ -331,43 +331,91 @@ class OCRPipeline:
         result: list,
         timestamp: float,
     ) -> list[TextDetection]:
-        """Parse PaddleOCR output into TextDetection objects."""
+        """Parse PaddleOCR output into TextDetection objects.
+        
+        Supports both old format (ocr API) and new format (predict API).
+        """
         detections = []
 
-        if not result or not result[0]:
+        if not result:
             return detections
 
-        for line in result[0]:
-            if not line:
-                continue
-
-            try:
-                # PaddleOCR format: [[bbox_points], (text, confidence)]
-                bbox_points, (text, confidence) = line
-
-                if confidence < self.config.min_confidence:
+        # Handle new PaddleOCR 3.x predict() format
+        # New format: [{'rec_texts': [...], 'rec_scores': [...], 'rec_polys': [...]}]
+        if isinstance(result, list) and len(result) > 0:
+            first_item = result[0]
+            
+            # Check if it's the new format (dict with rec_texts key)
+            if isinstance(first_item, dict) and 'rec_texts' in first_item:
+                texts = first_item.get('rec_texts', [])
+                scores = first_item.get('rec_scores', [])
+                polys = first_item.get('rec_polys', [])
+                
+                for i, text in enumerate(texts):
+                    if not text:
+                        continue
+                    
+                    confidence = scores[i] if i < len(scores) else 0.5
+                    if confidence < self.config.min_confidence:
+                        continue
+                    
+                    # Get bounding box from polygon
+                    if i < len(polys) and len(polys[i]) > 0:
+                        poly = polys[i]
+                        xs = [p[0] for p in poly]
+                        ys = [p[1] for p in poly]
+                        bbox = (min(xs), min(ys), max(xs), max(ys))
+                    else:
+                        bbox = (0, 0, 100, 20)  # Default bbox
+                    
+                    category = self.categorizer.categorize(text, bbox)
+                    
+                    detections.append(
+                        TextDetection(
+                            text=text,
+                            confidence=confidence,
+                            bbox=bbox,
+                            timestamp=timestamp,
+                            category=category,
+                        )
+                    )
+                return detections
+            
+            # Handle old format: [[bbox_points, (text, confidence)], ...]
+            if not first_item:
+                return detections
+                
+            for line in first_item:
+                if not line:
                     continue
 
-                # Convert polygon to rectangle bbox
-                xs = [p[0] for p in bbox_points]
-                ys = [p[1] for p in bbox_points]
-                bbox = (min(xs), min(ys), max(xs), max(ys))
+                try:
+                    # Old PaddleOCR format: [[bbox_points], (text, confidence)]
+                    bbox_points, (text, confidence) = line
 
-                # Categorize the text
-                category = self.categorizer.categorize(text, bbox)
+                    if confidence < self.config.min_confidence:
+                        continue
 
-                detections.append(
-                    TextDetection(
-                        text=text,
-                        confidence=confidence,
-                        bbox=bbox,
-                        timestamp=timestamp,
-                        category=category,
+                    # Convert polygon to rectangle bbox
+                    xs = [p[0] for p in bbox_points]
+                    ys = [p[1] for p in bbox_points]
+                    bbox = (min(xs), min(ys), max(xs), max(ys))
+
+                    # Categorize the text
+                    category = self.categorizer.categorize(text, bbox)
+
+                    detections.append(
+                        TextDetection(
+                            text=text,
+                            confidence=confidence,
+                            bbox=bbox,
+                            timestamp=timestamp,
+                            category=category,
+                        )
                     )
-                )
-            except (ValueError, TypeError, IndexError) as e:
-                logger.debug(f"Failed to parse OCR result: {e}")
-                continue
+                except (ValueError, TypeError, IndexError) as e:
+                    logger.debug(f"Failed to parse OCR result: {e}")
+                    continue
 
         return detections
 
