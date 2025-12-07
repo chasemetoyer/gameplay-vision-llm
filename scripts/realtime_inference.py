@@ -162,9 +162,19 @@ def extract_frames(video_path: str, fps: float = 0.5) -> list[tuple[float, Image
 # Visual Detection (SAM3)
 # =============================================================================
 
-def run_sam3_detection(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
+def run_sam3_detection(
+    frames: list[tuple[float, Image.Image]], 
+    device: str = "cuda",
+    concepts: list[str] = None,
+):
     """
     Run SAM3 for visual entity detection on frames.
+    
+    Args:
+        frames: List of (timestamp, PIL.Image) tuples
+        device: Device to run on
+        concepts: List of concept prompts for detection. If None, uses default gameplay concepts.
+                  For benchmarks, extract concepts from question/choices for better relevance.
     
     Returns list of detections per frame with bounding boxes and masks.
     """
@@ -176,8 +186,9 @@ def run_sam3_detection(frames: list[tuple[float, Image.Image]], device: str = "c
         config = SAMConfig(device=device)
         segmenter = SAMConceptSegmenter(config)
         
-        # Concepts to detect in gameplay
-        concepts = ["player", "enemy", "boss", "health bar", "weapon", "character", "object"]
+        # Use provided concepts or default gameplay concepts
+        if concepts is None:
+            concepts = ["player", "enemy", "boss", "health bar", "weapon", "character", "object"]
         
         all_detections = []
         
@@ -762,8 +773,59 @@ def answer_query(loop, query: str, timestamp: Optional[float] = None) -> str:
     return response or "[No response generated]"
 
 
+def answer_query_streaming(loop, query: str, timestamp: Optional[float] = None):
+    """
+    Answer a query with streaming output - yields tokens as they're generated.
+    """
+    import sys
+    
+    # Get embeddings near timestamp (or all if not specified)
+    cached = loop._cached_embeddings
+    
+    # Get relevant embeddings
+    if timestamp is not None:
+        # Filter embeddings near timestamp
+        window = 30.0  # ±30 seconds
+        siglip_near = [e for e in cached["siglip"] if abs(e["timestamp"] - timestamp) < window]
+        videomae_near = [e for e in cached["videomae"] if abs(e["timestamp"] - timestamp) < window]
+        wav2vec_near = [e for e in cached["wav2vec"] if abs(e["timestamp"] - timestamp) < window]
+    else:
+        # Use all embeddings (sample if too many)
+        siglip_near = cached["siglip"][:20]
+        videomae_near = cached["videomae"][:10]
+        wav2vec_near = cached["wav2vec"][:10]
+    
+    # Stack embeddings
+    siglip_tensor = torch.stack([e["embedding"] for e in siglip_near]) if siglip_near else None
+    videomae_tensor = torch.stack([e["embedding"] for e in videomae_near]) if videomae_near else None
+    wav2vec_tensor = torch.stack([e["embedding"] for e in wav2vec_near]) if wav2vec_near else None
+    
+    # Get a frame for visual context
+    frame = None
+    if timestamp is not None and cached["frames"]:
+        closest_frame = min(cached["frames"], key=lambda f: abs(f[0] - timestamp))
+        frame = closest_frame[1]
+    elif cached["frames"]:
+        frame = cached["frames"][len(cached["frames"]) // 2][1]
+    
+    # Start loop and use streaming
+    loop.start()
+    loop.set_query(query)
+    
+    # Use streaming generation
+    for token in loop.reasoning_core.reason_streaming(
+        query=query,
+        current_frame=frame,
+        timeline_indexer=loop.timeline_indexer,
+        knowledge_base=loop.knowledge_base,
+    ):
+        yield token
+
+
 def interactive_mode(loop):
-    """Interactive Q&A session."""
+    """Interactive Q&A session with streaming output."""
+    import sys
+    
     print("\n" + "=" * 60)
     print("🎮 INTERACTIVE GAMEPLAY ANALYSIS")
     print("=" * 60)
@@ -795,9 +857,13 @@ def interactive_mode(loop):
                 print(f"📍 Focusing on timestamp: {mins}:{secs}")
             
             print("\n🔍 Analyzing...\n")
-            response = answer_query(loop, query, timestamp)
+            print("📝 Response:")
             
-            print(f"📝 Response:\n{response}\n")
+            # Stream tokens as they're generated (like ChatGPT typing)
+            for token in answer_query_streaming(loop, query, timestamp):
+                print(token, end="", flush=True)
+            
+            print("\n")  # New line after streaming completes
             
         except KeyboardInterrupt:
             print("\n\nGoodbye!")

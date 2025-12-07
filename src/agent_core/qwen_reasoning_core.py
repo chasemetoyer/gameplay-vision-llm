@@ -107,8 +107,17 @@ class ReasoningCoreConfig:
 2. The current video frame for visual grounding
 3. An entity knowledge base tracking game objects
 
-Analyze the provided context and answer the user's question accurately.
-When referencing events, cite their timestamps. Be concise but thorough."""
+IMPORTANT: Before answering, show your reasoning step-by-step:
+1. First, identify the relevant events and timestamps from the context
+2. Then, explain how these events connect to the question
+3. Finally, provide your answer with specific timestamp citations
+
+Format your response as:
+**Reasoning:**
+[Your step-by-step analysis here]
+
+**Answer:**
+[Your final answer with timestamp citations]"""
 
 
 # =============================================================================
@@ -1221,6 +1230,144 @@ class QwenVLCore:
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             return f"[Error during generation: {e}]"
+
+    def reason_streaming(
+        self,
+        query: str,
+        current_frame: Optional["Image.Image"] = None,
+        timeline_indexer=None,
+        knowledge_base=None,
+        region_detections: Optional[list[dict]] = None,
+    ):
+        """
+        Execute reasoning with streaming output (yields tokens as generated).
+        
+        Same as reason() but yields each token as it's generated for
+        real-time display like ChatGPT.
+        
+        Yields:
+            str: Each new token/chunk of text as it's generated
+        """
+        self._load_model()
+
+        if self._processor is None:
+            yield "[Error: Qwen3-VL model not loaded]"
+            return
+
+        # Prepare inputs (same as reason method)
+        logger.info(f"Processing query (streaming): {query[:50]}...")
+
+        if timeline_indexer is not None:
+            self.retriever.index_timeline(timeline_indexer)
+
+        events = self.retriever.hybrid_retrieve(query, timeline_indexer)
+        timeline_context = self.format_timeline_context(events)
+
+        region_tokens = None
+        if region_detections:
+            region_tokens = self.visual_processor.process_region_tokens(
+                region_detections
+            )
+
+        kb_context = None
+        if knowledge_base is not None:
+            kb_context = knowledge_base.export_for_llm(
+                max_entities=15,
+                max_relationships=20,
+            )
+
+        messages = self.build_prompt(
+            query=query,
+            timeline_context=timeline_context,
+            current_frame=current_frame,
+            region_tokens=region_tokens,
+            knowledge_base_context=kb_context,
+        )
+
+        # Prepare inputs
+        try:
+            has_image = current_frame is not None
+
+            if has_image:
+                try:
+                    from qwen_vl_utils import process_vision_info
+
+                    text = self._processor.apply_chat_template(
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    images, videos, _ = process_vision_info(
+                        messages,
+                        image_patch_size=16,
+                        return_video_kwargs=True,
+                    )
+                    inputs = self._processor(
+                        text=text,
+                        images=images,
+                        videos=videos,
+                        do_resize=False,
+                        return_tensors="pt",
+                    )
+                except ImportError:
+                    inputs = self._processor.apply_chat_template(
+                        messages,
+                        tokenize=True,
+                        add_generation_prompt=True,
+                        return_dict=True,
+                        return_tensors="pt",
+                    )
+            else:
+                inputs = self._processor.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                )
+
+            inputs = inputs.to(self._model.device)
+
+        except Exception as e:
+            yield f"[Error preparing inputs: {e}]"
+            return
+
+        # Generate with streaming
+        try:
+            from transformers import TextIteratorStreamer
+            from threading import Thread
+
+            # Create streamer
+            streamer = TextIteratorStreamer(
+                self._processor.tokenizer,
+                skip_prompt=True,
+                skip_special_tokens=True,
+            )
+
+            # Generation kwargs
+            generation_kwargs = dict(
+                **inputs,
+                max_new_tokens=self.config.max_new_tokens,
+                temperature=self.config.temperature,
+                top_p=self.config.top_p,
+                top_k=self.config.top_k,
+                do_sample=True,
+                streamer=streamer,
+            )
+
+            # Run generation in a thread
+            thread = Thread(target=self._model.generate, kwargs=generation_kwargs)
+            thread.start()
+
+            # Yield tokens as they come
+            for token in streamer:
+                yield token
+
+            thread.join()
+
+        except Exception as e:
+            logger.error(f"Streaming generation failed: {e}")
+            yield f"[Error during generation: {e}]"
 
 
 # =============================================================================
