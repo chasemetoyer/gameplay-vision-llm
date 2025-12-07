@@ -56,6 +56,17 @@ dependencies = [
     # Video download and processing
     "yt-dlp",
     "opencv-python>=4.6.0",
+    
+    # Additional ML/model dependencies
+    "flash-attn",
+    "einops",
+    "timm",
+    "sentencepiece",
+    "tiktoken",
+    
+    # Visualization and graphs
+    "matplotlib",
+    "networkx",
 ]
 
 [project.optional-dependencies]
@@ -85,3 +96,6 @@ dev-dependencies = [
     "black",
     "ruff",
 ]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]
