@@ -143,7 +143,7 @@ opencv-python-headless==4.6.0.66
 openpyxl==3.1.5
 opt-einsum==3.3.0
 packaging==25.0
-paddleocr==2.7.0.0
+paddleocr==3.3.2
 paddlepaddle==3.2.2
 paddlex==3.3.10
 pandas==2.3.3
@@ -174,7 +174,7 @@ pydantic_core==2.41.5
 Pygments==2.19.2
 PyGObject==3.48.2
 PyJWT==2.7.0
-PyMuPDF==1.20.2
+PyMuPDF==1.26.6
 pyparsing==3.2.5
 pypdfium2==5.1.0
 python-apt==2.7.7+ubuntu5
