@@ -68,34 +68,40 @@ The project utilizes a **Hybrid Retrieval** system for context fetching, which i
 ### Tested Environment
 
 This project has been tested on:
-- **RunPod Image**: `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`
+- **RunPod Image**: `runpod/pytorch:2.8.0-py3.12-cuda12.8.0-ubuntu24.04`
 - **Python**: 3.12+
 - **CUDA**: 12.8+
-- **GPU**: NVIDIA A100 80GB (40GB+ recommended)
+- **GPU**: NVIDIA H200, A100 (40GB+ recommended)
 
-### Quick Start (RunPod)
+### Quick Start (Recommended)
+
+Use the automated setup script which handles all dependency ordering and known issues:
 
 ```bash
 # Clone repository
 git clone https://github.com/chasemetoyer/gameplay-vision-llm.git
 cd gameplay-vision-llm
 
-# Option 1: Install with pip (recommended)
-pip install -r requirements.txt
-
-# Option 2: Install with uv (faster)
-pip install uv
-uv pip install -r requirements.txt
-uv pip sync  # Optional: sync with uv.lock for exact versions
+# Run the setup script (handles everything)
+chmod +x setup_env.sh
+./setup_env.sh
 
 # Download trained weights from Hugging Face
 python -c "from huggingface_hub import snapshot_download; snapshot_download('cjm249/gameplay-vision-llm-adapters', local_dir='outputs')"
 ```
 
+The `setup_env.sh` script:
+1. Installs PyTorch and build dependencies first
+2. Installs Flash Attention from pre-built wheel
+3. Installs core dependencies from `requirements-core.txt`
+4. Installs PaddlePaddle GPU 3.2.0 from official Paddle wheel index
+5. Restores PyTorch CUDA libraries (fixes conflicts)
+6. Verifies all installations
+
 ### Run Inference
 
 ```bash
-# With a local video
+# With a local video (full processing with SAM detection)
 python scripts/realtime_inference.py \
     --video "/path/to/your/gameplay.mp4" \
     --use-sam \
@@ -106,19 +112,30 @@ python scripts/realtime_inference.py \
     --video "https://www.youtube.com/watch?v=VIDEO_ID" \
     --use-sam \
     --interactive
+
+# Without SAM3 (faster processing)
+python scripts/realtime_inference.py \
+    --video "/path/to/your/gameplay.mp4" \
+    --interactive
 ```
 
-### Manual Installation (if needed)
+### Manual Installation (Alternative)
+
+If you prefer manual installation:
 
 ```bash
-# Core dependencies only (lighter install)
+# 1. Install PyTorch first (required for Flash Attention)
+pip install torch torchvision torchaudio accelerate
+
+# 2. Install Flash Attention from pre-built wheel
+pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+
+# 3. Install core dependencies
 pip install -r requirements-core.txt
 
-# Install Flash Attention (recommended for performance)
-pip install flash-attn --no-build-isolation
-
-# Install PaddleOCR (required for OCR)
-pip install paddlepaddle-gpu paddleocr
+# 4. Install PaddleOCR with GPU (from official Paddle source)
+python3 -m pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+pip install paddleocr
 ```
 
 ## Project Structure
