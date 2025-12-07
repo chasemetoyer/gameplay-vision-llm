@@ -28,7 +28,7 @@ dependencies = [
     "scikit-image",
     
     # OCR
-    "paddlepaddle==2.6.2",  # CPU-only to avoid CUDNN conflicts
+    "paddlepaddle>=2.6.0",  # 3.x works with paddleocr 3.x
     "paddleocr>=2.7.0",
     
     # Audio
