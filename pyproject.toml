@@ -11,7 +11,7 @@ dependencies = [
     "torch>=2.0.0",
     "torchvision",
     "torchaudio",
-    "transformers>=4.40.0",
+    "transformers @ git+https://github.com/huggingface/transformers.git@ff13eb668aa03f151ded71636d723f2e490ad967",
     "accelerate>=1.0.0",
     "safetensors",
     
