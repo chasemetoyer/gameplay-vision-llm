@@ -34,6 +34,8 @@ tqdm
 pyyaml
 transformers>=4.40.0
 huggingface_hub
+setuptools  # Required by PaddleOCR
+accelerate>=0.20.0  # Required by transformers device_map
 
 # ===================
 # Video processing

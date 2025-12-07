@@ -37,27 +37,37 @@ class MLXConfig:
     model_name: str = "mlx-community/Qwen3-VL-8B-Instruct-4bit"
     
     # Generation settings
-    max_new_tokens: int = 512
+    max_new_tokens: int = 1024  # Increased for CoT reasoning
     temperature: float = 0.7
     top_p: float = 0.9
     
-    # System prompt
-    system_prompt: str = """You are an expert gameplay analyst. You have access to:
-1. A timeline of events extracted from the video (OCR, speech, visual detections)
-2. The current video frame for visual grounding
-3. An entity knowledge base tracking game objects
+    # Chain of Thought settings
+    show_thinking: bool = True  # Show reasoning process
+    
+    # System prompt with explicit CoT instructions
+    system_prompt: str = """You are an expert gameplay analyst with deep knowledge of video games.
 
-IMPORTANT: Before answering, show your reasoning step-by-step:
-1. First, identify the relevant events and timestamps from the context
-2. Then, explain how these events connect to the question
-3. Finally, provide your answer with specific timestamp citations
+You MUST think step-by-step before answering. Always show your reasoning process.
 
-Format your response as:
-**Reasoning:**
-[Your step-by-step analysis here]
+## Your Analysis Process:
 
-**Answer:**
-[Your final answer with timestamp citations]"""
+<thinking>
+1. **Observe**: What do I see in the frame? Describe key visual elements.
+2. **Identify**: What game is this? What entities are present (player, enemies, UI)?
+3. **Context**: What is happening? What phase of gameplay? Any timeline events?
+4. **Reason**: How do these observations connect to the question?
+5. **Conclude**: What is the answer based on my analysis?
+</thinking>
+
+## Response Format:
+
+**🧠 Thinking:**
+[Show your step-by-step reasoning here - what you observe, identify, and conclude]
+
+**📝 Answer:**
+[Your final answer with specific details from your analysis]
+
+IMPORTANT: Always show your thinking process. Users want to see HOW you arrived at your answer, not just the answer itself."""
 
 
 class MLXQwenVLCore:
@@ -145,11 +155,28 @@ class MLXQwenVLCore:
         
         context = "\n\n".join(context_parts) if context_parts else ""
         
-        # Build prompt
+        # Build prompt with CoT forcing suffix
+        cot_suffix = ""
+        if self.config.show_thinking:
+            cot_suffix = """
+
+---
+**Remember:** Show your reasoning step-by-step before answering!
+
+Start your response with:
+🧠 **Thinking:**
+1. What I observe in the frame...
+2. What I identify (game, entities, UI)...
+3. My reasoning about the question...
+
+Then provide:
+📝 **Answer:**
+[Your final answer]"""
+        
         if context:
-            user_message = f"{context}\n\n## Question\n{query}"
+            user_message = f"{context}\n\n## Question\n{query}{cot_suffix}"
         else:
-            user_message = query
+            user_message = f"{query}{cot_suffix}"
         
         messages = [
             {"role": "system", "content": self.config.system_prompt},
@@ -162,12 +189,14 @@ class MLXQwenVLCore:
             messages[-1]["images"] = [current_frame]
         
         try:
-            # Apply chat template
+            # Apply chat template - CRITICAL: must pass num_images to insert image tokens!
+            # Without this, the template has 0 image tokens but images are passed,
+            # causing "tokens: 0, features N" error
             prompt = self._apply_chat_template(
                 self._processor,
                 self._load_config(self.config.model_name),
                 prompt=user_message,
-                images=[current_frame] if current_frame else None,
+                num_images=1 if current_frame else 0,
             )
             
             # Generate response
@@ -214,24 +243,42 @@ class MLXQwenVLCore:
         
         context = "\n\n".join(context_parts) if context_parts else ""
         
+        # Build prompt with CoT forcing suffix (same as reason method)
+        cot_suffix = ""
+        if self.config.show_thinking:
+            cot_suffix = """
+
+---
+**Remember:** Show your reasoning step-by-step before answering!
+
+Start your response with:
+🧠 **Thinking:**
+1. What I observe in the frame...
+2. What I identify (game, entities, UI)...
+3. My reasoning about the question...
+
+Then provide:
+📝 **Answer:**
+[Your final answer]"""
+        
         if context:
-            user_message = f"{context}\n\n## Question\n{query}"
+            user_message = f"{context}\n\n## Question\n{query}{cot_suffix}"
         else:
-            user_message = query
+            user_message = f"{query}{cot_suffix}"
         
         try:
             from mlx_vlm import stream_generate
             
-            # Apply chat template
+            # Apply chat template - CRITICAL: must pass num_images to insert image tokens!
             prompt = self._apply_chat_template(
                 self._processor,
                 self._load_config(self.config.model_name),
                 prompt=user_message,
-                images=[current_frame] if current_frame else None,
+                num_images=1 if current_frame else 0,
             )
             
-            # Stream generate
-            for token in stream_generate(
+            # Stream generate - returns GenerationResult objects, extract .text
+            for result in stream_generate(
                 self._model,
                 self._processor,
                 prompt,
@@ -239,7 +286,11 @@ class MLXQwenVLCore:
                 max_tokens=self.config.max_new_tokens,
                 temp=self.config.temperature,
             ):
-                yield token
+                # Extract just the text from GenerationResult
+                if hasattr(result, 'text'):
+                    yield result.text
+                else:
+                    yield str(result)
                 
         except ImportError:
             # Fallback to non-streaming if stream_generate not available

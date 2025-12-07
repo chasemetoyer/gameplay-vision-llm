@@ -185,11 +185,12 @@ class SigLIPEncoder(nn.Module):
             logger.info(f"Loading SigLIP encoder: {self.config.model_name}")
             
             # Load full model (not just vision_model) to access get_image_features()
+            # NOTE: Don't use device_map="auto" on Mac - it requires accelerate and
+            # doesn't work well with MPS. Manually move to device instead.
             self._model = AutoModel.from_pretrained(
                 self.config.model_name,
                 torch_dtype=self.config.dtype,
-                device_map="auto",
-            )
+            ).to(self.config.device)
             self._model.eval()
 
             self._processor = AutoProcessor.from_pretrained(
@@ -251,10 +252,9 @@ class SigLIPEncoder(nn.Module):
         """
         self._load_model()
 
-        with torch.no_grad(), torch.autocast(
-            device_type="cuda",
-            enabled=self.config.use_amp,
-        ):
+        # NOTE: Skip autocast on MPS - it has limited dtype support
+        # and causes issues with SigLIP on Mac
+        with torch.no_grad():
             # Use get_image_features() for best embeddings (official API)
             if hasattr(self._model, "get_image_features"):
                 pooled = self._model.get_image_features(

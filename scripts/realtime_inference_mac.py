@@ -39,8 +39,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Suppress noisy logs
-for name in ["httpx", "httpcore", "huggingface_hub", "transformers", "urllib3"]:
+for name in ["httpx", "httpcore", "huggingface_hub", "transformers", "urllib3", "filelock"]:
     logging.getLogger(name).setLevel(logging.WARNING)
+
+# Suppress tqdm progress bars from huggingface_hub during inference
+import os
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 
 def get_device():

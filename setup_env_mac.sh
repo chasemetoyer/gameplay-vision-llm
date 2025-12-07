@@ -55,6 +55,13 @@ pip install --upgrade pip --quiet
 # Install requirements
 echo ""
 echo "📥 Installing dependencies (this may take a few minutes)..."
+
+# Install critical dependencies first (required by other packages)
+echo "   [1/2] Installing core dependencies..."
+pip install --quiet setuptools accelerate>=0.20.0
+
+# Install main requirements
+echo "   [2/2] Installing main requirements..."
 pip install -r requirements-mac.txt
 
 echo ""
