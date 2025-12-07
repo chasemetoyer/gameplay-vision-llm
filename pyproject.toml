@@ -52,6 +52,10 @@ dependencies = [
     "httpx",
     "requests",
     "huggingface_hub>=0.20.0",
+    
+    # Video download and processing
+    "yt-dlp",
+    "opencv-python>=4.6.0",
 ]
 
 [project.optional-dependencies]
