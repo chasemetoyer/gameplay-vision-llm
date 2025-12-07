@@ -59,6 +59,7 @@ fsspec==2024.6.1
 future==1.0.0
 h11==0.16.0
 hf-xet==1.2.0
+hf_transfer==0.1.9
 httpcore==1.0.9
 httplib2==0.20.4
 httpx==0.28.1

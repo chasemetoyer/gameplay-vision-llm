@@ -52,6 +52,7 @@ dependencies = [
     "httpx",
     "requests",
     "huggingface_hub>=0.20.0",
+    "hf_transfer",  # Fast HuggingFace downloads
     
     # Video download and processing
     "yt-dlp",
