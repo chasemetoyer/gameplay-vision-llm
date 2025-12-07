@@ -12,6 +12,14 @@ Download the trained adapters from Hugging Face:
 
 This project implements a multimodal perception-reasoning pipeline for analyzing gameplay videos. The system integrates visual perception (SAM3, SigLIP), temporal understanding (VideoMAE), audio processing (Wav2Vec2, Whisper), and text extraction (OCR) with a vision-language model (Qwen3-VL-8B-Instruct) through learned projection layers. The architecture enables natural language question-answering about video content by projecting heterogeneous perceptual embeddings into a unified representation space compatible with the language model's hidden dimensions.
 
+## Project Validation (Verified Capabilities)
+
+The final deployment validates the project’s ability to perform **long-horizon reasoning** by combining vision, temporal, and textual facts across extended timelines.
+
+-   **Multimodal Alignment Success:** The system successfully integrated heterogeneous encoder features (SigLIP: 1152-dim, VideoMAE: 768-dim, Wav2Vec2: 1024-dim) into the Qwen LLM's **4096-dimension** latent space using the trained ProjectorBank.
+-   **Causal Reasoning Verified:** LoRA fine-tuning successfully enabled the model to perform **structured strategic analysis** and answer complex 'why' questions, such as linking player actions (e.g., maximum Overcharge application) to subsequent game state changes (e.g., the BROKEN state) [A: 172, A: 175, A: 549].
+-   **Temporal Synthesis:** The system demonstrated the ability to synthesize detailed, chronological summaries of events spanning minutes of gameplay by retrieving context from the indexed timeline.
+
 ## Architecture
 ![Generated Image December 06, 2025 - 1_11PM (1)](https://github.com/user-attachments/assets/4d83fb3b-f6f2-4a38-99d7-32990d162eb3)
 
@@ -41,6 +49,12 @@ class MultiModalProjector(nn.Module):
             nn.Linear(llm_dim, llm_dim),
         )
 ```
+
+### Fusion and Indexing
+
+The project utilizes a **Hybrid Retrieval** system for context fetching, which is critical for long-video understanding:
+-   **Time-Based Retrieval:** Used when the user provides an explicit timestamp (e.g., '@00:45'), retrieving events within a defined window.
+-   **Semantic Retrieval:** For general queries ('what happened here?'), the system uses the **`all-MiniLM-L6-v2`** embedder to find the top $K$ most relevant events in the entire timeline index [A: 429, A: 437, A: 517].
 
 ### Reasoning Core
 
@@ -231,11 +245,8 @@ The Qwen3-VL model is fine-tuned using Low-Rank Adaptation on gameplay Q&A pairs
 
 ### Projector Training
 
-The projection layers are trained with a generative alignment objective:
 
-```
-L = CrossEntropy(LLM(projected_embeddings + text_tokens), target_text)
-```
+The projection layers (Linear → GELU → Linear) are trained with a **Generative Alignment Objective** while keeping the LLM frozen. This objective utilizes **Mean Squared Error (MSE)** to optimize the projectors so that the norm (magnitude) of the projected embeddings approaches a target value (specifically, $\sqrt{\text{LLM\_hidden\_dim}}$), ensuring semantic compatibility with the Qwen LLM.
 
 The LLM weights remain frozen; gradients flow only through projection layers.
 
@@ -243,7 +254,7 @@ The LLM weights remain frozen; gradients flow only through projection layers.
 
 | Component | VRAM (bfloat16) |
 |-----------|-----------------|
-| Qwen3-VL-8B | ~16 GB |
+| Qwen3-VL-8B-Instruct | ~16 GB |
 | SAM3 | ~4 GB |
 | SigLIP | ~2 GB |
 | VideoMAE | ~1 GB |
@@ -254,7 +265,8 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 
 ## Limitations
 
-- Real-time processing is limited by SAM3 detection speed (~3s per frame)
+- **Real-time Processing Bottleneck:** The current latency for generating full perception features is severely limited by the Segmentation and Masking model.
+    *   **SAM3 Detection Speed:** Processing currently averages **~3.25 to 3.36 seconds per frame** for full detection [A: 478, A: 10]. This prevents true real-time analysis and necessitates the implementation of cascaded processing for efficiency.
 - Whisper transcription adds processing time for audio-heavy content
 - OCR accuracy depends on video resolution and text clarity
 
@@ -262,11 +274,11 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 
 ### High Priority
 
-- **SAM3 Speed Optimization**
-  - Implement batch processing for multiple frames
-  - Add frame caching to skip visually similar frames
-  - Explore SAM3-Turbo or distilled variants
-  - GPU memory optimization for parallel detection
+- **Cascaded Processing and Efficiency**
+
+    1.  **Implement Trigger Detector:** Integrate the `TriggerDetector` mechanism to enable **selective analysis** (cascaded processing). This system must monitor perception outputs (e.g., SAM3 detecting a 'boss' or Qwen2-Audio detecting an 'explosion') and only activate the high-cost reasoning core (Qwen LLM) when a significant, high-confidence event is detected [A: 147, A: 163, A: 418].
+    2.  **Integrate Temporal Context Management (HiCo):** Activate the `TemporalContextManager` to use **Hierarchical Token Compression (HiCo)**, ensuring the LLM receives a continuous, rolling compressed context representing the last **5–10 minutes** of video via VideoMAE embeddings. This maintains long-range causal awareness while keeping token consumption low [A: 299, A: 405, A: 425].
+    3.  **Entity-Centric Knowledge Base:** Fully utilize the `KnowledgeBaseBuilder` to ingest structured facts (entity IDs, state changes, bounding boxes) extracted by SAM3, transforming raw detections into explicit causal linkages for the LLM to reason over [A: 142, A: 535].
 
 - **SigLIP Inference Speed**
   - Batch encode multiple regions simultaneously
