@@ -36,7 +36,7 @@ model = Qwen3VLForConditionalGeneration.from_pretrained(
 )
 
 # Apply LoRA adapter
-model = PeftModel.from_pretrained(model, "cjm249/gameplay-vision-llm-adapters", subfolder="lora_adapter")
+model = PeftModel.from_pretrained(model, "YOUR_USERNAME/gameplay-vision-llm-adapters", subfolder="lora_adapter")
 
 # Load projector weights
 projector_weights = torch.load("projector_weights.pt")

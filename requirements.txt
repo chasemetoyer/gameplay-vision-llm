@@ -35,7 +35,7 @@ cssutils==2.11.1
 cycler==0.12.1
 Cython==3.2.2
 datasets==4.4.1
-dbus-python==1.3.2
+# dbus-python==1.3.2
 debugpy==1.8.17
 decorator==5.2.1
 decord==0.6.0
@@ -49,7 +49,7 @@ executing==2.2.1
 fastjsonschema==2.21.2
 filelock==3.20.0
 fire==0.7.1
-flash_attn==2.8.3
+# flash_attn==2.8.3  # Installed manually in setup_env.sh to avoid build isolation issues
 Flask==3.1.2
 flask-babel==4.0.0
 fonttools==4.61.0
@@ -94,7 +94,7 @@ jupyterlab_server==2.27.3
 jupyterlab_widgets==3.0.15
 kiwisolver==1.4.9
 lark==1.3.0
-launchpadlib==1.11.0
+# launchpadlib==1.11.0
 lazr.restfulclient==0.14.6
 lazr.uri==1.0.6
 lazy_loader==0.4
@@ -150,8 +150,8 @@ pandas==2.3.3
 pandocfilters==1.5.1
 parso==0.8.5
 pdf2docx==0.5.8
-peft==0.18.0
-pexpect==4.9.0
+# peft==0.18.0
+# pexpect==4.9.0
 pillow==12.0.0
 platformdirs==4.5.0
 pooch==1.8.2
@@ -172,12 +172,12 @@ pycryptodome==3.23.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 Pygments==2.19.2
-PyGObject==3.48.2
+# PyGObject==3.48.2
 PyJWT==2.7.0
-PyMuPDF==1.26.6
+# PyMuPDF==1.26.6
 pyparsing==3.2.5
 pypdfium2==5.1.0
-python-apt==2.7.7+ubuntu5
+# python-apt==2.7.7+ubuntu5
 python-bidi==0.6.7
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
@@ -201,7 +201,7 @@ scikit-image==0.25.2
 scikit-learn==1.7.2
 scipy==1.16.3
 Send2Trash==1.8.3
-sentence-transformers==5.1.2
+# sentence-transformers==5.1.2
 sentencepiece==0.2.1
 setuptools==80.9.0
 shapely==2.1.2
