@@ -59,7 +59,7 @@ projector_weights = torch.load("projector_weights.pt")
 
 ## GitHub Repository
 
-Full codebase: https://github.com/cjm249/gameplay-vision-llm
+Full codebase: https://github.com/chasemetoyer/gameplay-vision-llm
 
 ## License
 
