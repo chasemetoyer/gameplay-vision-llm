@@ -1,7 +1,7 @@
 # Multimodal Gameplay Video Understanding with Vision-Language Models
 
 A research framework for multimodal video understanding and question-answering on gameplay footage, combining state-of-the-art vision encoders, audio processing, and large language models with trained projection adapters.
-Article I made describing what I am trying to do: https://medium.com/@cmetoyerbusiness/towards-a-cascaded-multimodal-pipeline-for-long-horizon-gameplay-analysis-25ed6a8630c9
+
 
 ## Trained Weights
 
@@ -22,7 +22,100 @@ The final deployment validates the project’s ability to perform **long-horizon
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph Input["📥 Input Layer"]
+        VIDEO["🎬 Video File / YouTube URL"]
+        FRAMES["🖼️ Frame Extraction (0.5 FPS)"]
+        AUDIO["🔊 Audio Extraction (FFmpeg)"]
+    end
 
+    subgraph Perception["👁️ Perception Layer"]
+        direction TB
+        SAM3["SAM3 Concept Segmenter<br/>Entity Detection & Tracking"]
+        SIGLIP["SigLIP 2 NaFlex<br/>Semantic Embeddings (1152-dim)"]
+        OCR["PaddleOCR Pipeline<br/>UI Text, Subtitles, Numbers"]
+    end
+
+    subgraph AudioLayer["🎵 Audio Layer"]
+        WHISPER["Whisper Base<br/>Speech Transcription"]
+        WAV2VEC["Wav2Vec2-Large<br/>Audio Embeddings (1024-dim)"]
+    end
+
+    subgraph Temporal["⏱️ Temporal Layer"]
+        VIDEOMAE["VideoMAE<br/>Temporal Context (768-dim)"]
+    end
+
+    subgraph Fusion["🔗 Fusion & Indexing Layer"]
+        TIMELINE["Timeline Indexer<br/>Event Deduplication & Merging"]
+        KNOWLEDGE["Knowledge Base Builder<br/>Entity, Temporal, Semantic Indexing"]
+    end
+
+    subgraph Reasoning["🧠 Reasoning Layer"]
+        QWEN["Qwen3-VL-8B-Instruct<br/>Vision-Language Model"]
+        PROJECTORS["Trained Projectors<br/>Embedding → LLM Space"]
+        LORA["LoRA Adapter<br/>Task-Specific Fine-tuning"]
+    end
+
+    subgraph Output["📤 Output Layer"]
+        RESPONSE["💬 Natural Language Response"]
+        STREAM["⚡ Streaming Generation"]
+    end
+
+    VIDEO --> FRAMES
+    VIDEO --> AUDIO
+    
+    FRAMES --> SAM3
+    FRAMES --> SIGLIP
+    FRAMES --> OCR
+    FRAMES --> VIDEOMAE
+    
+    SAM3 --> SIGLIP
+    SAM3 --> TIMELINE
+    
+    SIGLIP --> KNOWLEDGE
+    OCR --> TIMELINE
+    
+    AUDIO --> WHISPER
+    AUDIO --> WAV2VEC
+    
+    WHISPER --> TIMELINE
+    WAV2VEC --> KNOWLEDGE
+    VIDEOMAE --> KNOWLEDGE
+    
+    TIMELINE --> KNOWLEDGE
+    
+    KNOWLEDGE --> QWEN
+    PROJECTORS --> QWEN
+    LORA --> QWEN
+    
+    QWEN --> RESPONSE
+    QWEN --> STREAM
+```
+
+
+## Key Features
+
+### Autonomous Tool Calling
+The system can autonomously search the web for game-related information when needed:
+- Boss strategies and weaknesses
+- Game lore and mechanics
+- Item locations and effects
+
+### Multi-Turn Conversation
+- Maintains conversation history across questions
+- Detects follow-up questions and uses context
+- Supports commands like `/clear`, `/history`, `/save`, `/load`
+
+### Confidence Scoring
+- Each response includes a confidence score (0-100%)
+- Based on available evidence and context
+
+### Feature Caching
+- Extracted features are cached to avoid reprocessing
+- Subsequent runs load in ~30 seconds instead of ~15 minutes
+
+---
 
 ### Perception Pipeline Components
 
@@ -34,6 +127,11 @@ The final deployment validates the project’s ability to perform **long-horizon
 | Wav2Vec2 | facebook/wav2vec2-large | 1024-dim | Audio feature extraction |
 | Whisper | openai/whisper-base | Text | Speech-to-text transcription |
 | PaddleOCR | PaddlePaddle | Text | On-screen text extraction |
+
+> **Note:** SAM3 requires `transformers>=5.0.0.dev0` (development version). Install with:
+> ```bash
+> pip install git+https://github.com/huggingface/transformers.git
+> ```
 
 ### Projection Layer
 
@@ -214,6 +312,14 @@ During interactive mode:
 ```
 @<MM:SS> <question>  - Ask about specific timestamp
 <question>           - Ask about whole video
+/clear               - Clear conversation history
+/history             - Show conversation summary
+/save <path>         - Save conversation to file
+/load <path>         - Load conversation from file
+/game <name>         - Set game context (e.g., /game Elden Ring)
+/search <query>      - Search web for game info
+/wiki <topic>        - Search game wiki for topic
+/boss <name>         - Look up boss strategy
 quit                 - Exit
 ```
 
@@ -283,10 +389,13 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 
 ## Limitations
 
-- **Real-time Processing Bottleneck:** The current latency for generating full perception features is severely limited by the Segmentation and Masking model.
-    *   **SAM3 Detection Speed:** Processing currently averages **~3.25 to 3.36 seconds per frame** for full detection [A: 478, A: 10]. This prevents true real-time analysis and necessitates the implementation of cascaded processing for efficiency.
+- **Real-time Processing Bottleneck:** The current latency for generating full perception features is limited by SAM3 segmentation.
+    *   **SAM3 Detection Speed:** Processing averages **~2.2 seconds per frame** with TF32 optimization on A100 (improved from ~3.5s). BF16 is not currently supported for SAM3 inference.
+    *   **SigLIP Embedding:** Uses BF16 for ~2x speedup on A100/H100 GPUs.
 - Whisper transcription adds processing time for audio-heavy content
 - OCR accuracy depends on video resolution and text clarity
+- **Tool calling is model-dependent:** The 8B model may not always choose to search when it could. Larger models may be more consistent.
+- **transformers version:** Requires `transformers>=5.0.0.dev0` for SAM3 support
 
 ## Future Work
 
@@ -337,6 +446,12 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
   - Quantize projectors to INT8
   - Explore smaller LLM backbones (Qwen3-VL-4B)
   - ONNX export for faster inference
+  - Investigate SAM3 BF16 compatibility for further speedup
+
+- **SAM3 Batching**
+  - Process multiple concepts per frame in a single forward pass
+  - Implement CUDA streams for overlapping data transfer with compute
+  - Increase SigLIP batch size from 16 to 32-64 regions
 
 ### Low Priority / Research
 

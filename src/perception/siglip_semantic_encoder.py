@@ -64,7 +64,7 @@ class NaFlexConfig:
     # Reference: Section 3.2 - "SigLIP 2 So400m (Shape Optimized, embedding dim 1152)"
     model_name: str = "google/siglip2-so400m-patch14-384"
     device: str = "cuda"
-    dtype: torch.dtype = torch.float16
+    dtype: torch.dtype = torch.bfloat16  # BF16 for A100/H100 (faster)
 
     # NaFlex resolution settings - Updated for So400m's 384px base
     base_resolution: int = 384  # So400m uses 384px patches
@@ -77,9 +77,10 @@ class NaFlexConfig:
     use_cls_token: bool = True  # Use CLS token for embedding
     pool_strategy: str = "mean"  # 'cls', 'mean', or 'max' pooling
 
-    # Performance
+    # Performance optimizations for A100/H100
     batch_size: int = 16  # Max regions per batch
     use_amp: bool = True  # Automatic mixed precision
+    use_tf32: bool = True  # Enable TF32 for matmul (faster on Ampere+)
 
 
 class AspectPreservingResizer:
@@ -175,12 +176,18 @@ class SigLIPEncoder(nn.Module):
         self._processor = None
 
     def _load_model(self) -> None:
-        """Lazy load the SigLIP model and processor."""
+        """Lazy load the SigLIP model and processor with A100 optimizations."""
         if self._model is not None:
             return
 
         try:
             from transformers import AutoModel, AutoProcessor
+
+            # Enable TF32 for faster matmul on A100/H100
+            if self.config.use_tf32 and torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                logger.info("TF32 enabled for faster SigLIP matmul")
 
             logger.info(f"Loading SigLIP encoder: {self.config.model_name}")
             
@@ -195,7 +202,7 @@ class SigLIPEncoder(nn.Module):
             self._processor = AutoProcessor.from_pretrained(
                 self.config.model_name,
             )
-            logger.info("SigLIP encoder loaded successfully")
+            logger.info(f"SigLIP encoder loaded successfully (dtype={self.config.dtype})")
         except Exception as e:
             logger.warning(f"Could not load SigLIP model: {e}")
             logger.warning("Using placeholder encoder")
@@ -251,9 +258,10 @@ class SigLIPEncoder(nn.Module):
         """
         self._load_model()
 
-        with torch.no_grad(), torch.autocast(
+        with torch.inference_mode(), torch.autocast(
             device_type="cuda",
             enabled=self.config.use_amp,
+            dtype=self.config.dtype,
         ):
             # Use get_image_features() for best embeddings (official API)
             if hasattr(self._model, "get_image_features"):

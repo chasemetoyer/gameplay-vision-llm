@@ -19,10 +19,14 @@ References:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import numpy as np
@@ -33,6 +37,600 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Conversation History (Multi-turn Support)
+# =============================================================================
+
+@dataclass
+class ConversationTurn:
+    """Represents a single turn in the conversation."""
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: float  # Unix timestamp when this turn was added
+    metadata: dict = field(default_factory=dict)  # Optional metadata (e.g., video timestamp, confidence)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "role": self.role,
+            "content": self.content,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ConversationTurn":
+        """Create from dictionary."""
+        return cls(
+            role=data["role"],
+            content=data["content"],
+            timestamp=data.get("timestamp", time.time()),
+            metadata=data.get("metadata", {}),
+        )
+
+
+class ConversationHistory:
+    """
+    Manages multi-turn conversation history for contextual Q&A.
+
+    Features:
+    - Maintains rolling window of conversation turns
+    - Supports context summarization for long conversations
+    - Enables follow-up questions like "What happened next?"
+    - Tracks video timestamps mentioned in conversation
+
+    Example:
+        >>> history = ConversationHistory(max_turns=20)
+        >>> history.add_user_message("What happened at 5:30?")
+        >>> history.add_assistant_message("The player defeated the boss.")
+        >>> history.add_user_message("What happened next?")
+        >>> context = history.get_context_for_prompt()
+    """
+
+    def __init__(
+        self,
+        max_turns: int = 20,
+        max_tokens_estimate: int = 4000,
+        summarize_after: int = 15,
+    ):
+        """
+        Initialize conversation history.
+
+        Args:
+            max_turns: Maximum number of turns to keep in full detail
+            max_tokens_estimate: Approximate token budget for history
+            summarize_after: Start summarizing older turns after this many
+        """
+        self.max_turns = max_turns
+        self.max_tokens_estimate = max_tokens_estimate
+        self.summarize_after = summarize_after
+
+        self._turns: list[ConversationTurn] = []
+        self._summary: Optional[str] = None  # Summary of older conversation
+        self._video_timestamps_mentioned: list[float] = []  # Track timestamps discussed
+        self._session_start: float = time.time()
+
+    def add_user_message(
+        self,
+        content: str,
+        video_timestamp: Optional[float] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """
+        Add a user message to the conversation.
+
+        Args:
+            content: The user's message/question
+            video_timestamp: Optional video timestamp being discussed
+            metadata: Optional additional metadata
+        """
+        meta = metadata or {}
+        if video_timestamp is not None:
+            meta["video_timestamp"] = video_timestamp
+            self._video_timestamps_mentioned.append(video_timestamp)
+
+        turn = ConversationTurn(
+            role="user",
+            content=content,
+            timestamp=time.time(),
+            metadata=meta,
+        )
+        self._turns.append(turn)
+        self._maybe_truncate()
+
+    def add_assistant_message(
+        self,
+        content: str,
+        confidence: Optional[float] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """
+        Add an assistant response to the conversation.
+
+        Args:
+            content: The assistant's response
+            confidence: Optional confidence score (0-1)
+            metadata: Optional additional metadata
+        """
+        meta = metadata or {}
+        if confidence is not None:
+            meta["confidence"] = confidence
+
+        turn = ConversationTurn(
+            role="assistant",
+            content=content,
+            timestamp=time.time(),
+            metadata=meta,
+        )
+        self._turns.append(turn)
+        self._maybe_truncate()
+
+    def _maybe_truncate(self) -> None:
+        """Truncate history if it exceeds limits."""
+        if len(self._turns) > self.max_turns:
+            # Keep the most recent turns, summarize older ones
+            overflow = len(self._turns) - self.max_turns
+            old_turns = self._turns[:overflow]
+            self._turns = self._turns[overflow:]
+
+            # Create summary of old turns
+            old_summary = self._summarize_turns(old_turns)
+            if self._summary:
+                self._summary = f"{self._summary}\n{old_summary}"
+            else:
+                self._summary = old_summary
+
+    def _summarize_turns(self, turns: list[ConversationTurn]) -> str:
+        """Create a brief summary of conversation turns."""
+        if not turns:
+            return ""
+
+        summaries = []
+        for turn in turns:
+            role = "User" if turn.role == "user" else "Assistant"
+            # Truncate long content
+            content = turn.content[:100] + "..." if len(turn.content) > 100 else turn.content
+            summaries.append(f"{role}: {content}")
+
+        return "[Earlier conversation summary: " + " | ".join(summaries) + "]"
+
+    def get_context_for_prompt(
+        self,
+        include_summary: bool = True,
+        max_recent_turns: Optional[int] = None,
+    ) -> str:
+        """
+        Get conversation history formatted for inclusion in prompt.
+
+        Args:
+            include_summary: Whether to include summary of older turns
+            max_recent_turns: Limit to N most recent turns (None = all)
+
+        Returns:
+            Formatted conversation history string
+        """
+        parts = []
+
+        # Include summary of older conversation if available
+        if include_summary and self._summary:
+            parts.append(self._summary)
+
+        # Get recent turns
+        turns = self._turns
+        if max_recent_turns is not None:
+            turns = turns[-max_recent_turns:]
+
+        # Format turns
+        for turn in turns:
+            role_label = "User" if turn.role == "user" else "Assistant"
+            parts.append(f"{role_label}: {turn.content}")
+
+        return "\n".join(parts)
+
+    def get_messages_for_chat(self) -> list[dict]:
+        """
+        Get conversation history as chat messages for apply_chat_template.
+
+        Returns:
+            List of message dicts with 'role' and 'content'
+        """
+        messages = []
+        for turn in self._turns:
+            messages.append({
+                "role": turn.role,
+                "content": [{"type": "text", "text": turn.content}],
+            })
+        return messages
+
+    def get_last_user_query(self) -> Optional[str]:
+        """Get the most recent user query."""
+        for turn in reversed(self._turns):
+            if turn.role == "user":
+                return turn.content
+        return None
+
+    def get_last_assistant_response(self) -> Optional[str]:
+        """Get the most recent assistant response."""
+        for turn in reversed(self._turns):
+            if turn.role == "assistant":
+                return turn.content
+        return None
+
+    def get_mentioned_timestamps(self) -> list[float]:
+        """Get all video timestamps mentioned in conversation."""
+        return self._video_timestamps_mentioned.copy()
+
+    def get_last_mentioned_timestamp(self) -> Optional[float]:
+        """Get the most recently mentioned video timestamp."""
+        if self._video_timestamps_mentioned:
+            return self._video_timestamps_mentioned[-1]
+        return None
+
+    def clear(self) -> None:
+        """Clear all conversation history."""
+        self._turns.clear()
+        self._summary = None
+        self._video_timestamps_mentioned.clear()
+        self._session_start = time.time()
+
+    def get_turn_count(self) -> int:
+        """Get the number of turns in current history."""
+        return len(self._turns)
+
+    def is_follow_up_query(self, query: str) -> bool:
+        """
+        Detect if query is a follow-up that needs conversation context.
+
+        Args:
+            query: The user's query
+
+        Returns:
+            True if this appears to be a follow-up question
+        """
+        follow_up_patterns = [
+            r'\bwhat happened next\b',
+            r'\bwhat about\b',
+            r'\band then\b',
+            r'\bafter that\b',
+            r'\bbefore that\b',
+            r'\bwhy did (he|she|they|it|the player)\b',
+            r'\bwhat did (he|she|they|it|the player) do\b',
+            r'\bcan you explain more\b',
+            r'\btell me more\b',
+            r'\bwhat else\b',
+            r'\bhow did that happen\b',
+            r'\bwhy\?$',
+            r'^why\b',
+            r'^how\b',
+            r'^what\b.*\bthat\b',
+            r'\bthe same\b',
+            r'\bit\b.*\?$',  # Questions ending with "it?"
+        ]
+
+        query_lower = query.lower().strip()
+        for pattern in follow_up_patterns:
+            if re.search(pattern, query_lower):
+                return True
+
+        return False
+
+    def to_dict(self) -> dict:
+        """Serialize conversation history to dictionary."""
+        return {
+            "turns": [t.to_dict() for t in self._turns],
+            "summary": self._summary,
+            "video_timestamps_mentioned": self._video_timestamps_mentioned,
+            "session_start": self._session_start,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ConversationHistory":
+        """Deserialize conversation history from dictionary."""
+        history = cls()
+        history._turns = [ConversationTurn.from_dict(t) for t in data.get("turns", [])]
+        history._summary = data.get("summary")
+        history._video_timestamps_mentioned = data.get("video_timestamps_mentioned", [])
+        history._session_start = data.get("session_start", time.time())
+        return history
+
+    def save(self, path: str) -> None:
+        """Save conversation history to file."""
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+        logger.info(f"Saved conversation history to {path}")
+
+    @classmethod
+    def load(cls, path: str) -> "ConversationHistory":
+        """Load conversation history from file."""
+        with open(path, "r") as f:
+            data = json.load(f)
+        logger.info(f"Loaded conversation history from {path}")
+        return cls.from_dict(data)
+
+
+# =============================================================================
+# Feature Cache (Avoid Reprocessing)
+# =============================================================================
+
+class FeatureCache:
+    """
+    Caches extracted features to avoid reprocessing the same video.
+
+    Features:
+    - Caches SigLIP, VideoMAE, Wav2Vec2 embeddings
+    - Caches SAM detections, OCR results, speech transcriptions
+    - Uses content hash to detect if video has changed
+    - Supports disk persistence for cross-session caching
+
+    Example:
+        >>> cache = FeatureCache(cache_dir="data/cache")
+        >>>
+        >>> # Check if features exist
+        >>> if cache.has_features(video_path):
+        ...     features = cache.load_features(video_path)
+        ... else:
+        ...     features = extract_features(video_path)
+        ...     cache.save_features(video_path, features)
+    """
+
+    def __init__(
+        self,
+        cache_dir: str = "data/cache",
+        max_cache_size_gb: float = 10.0,
+    ):
+        """
+        Initialize feature cache.
+
+        Args:
+            cache_dir: Directory for cached features
+            max_cache_size_gb: Maximum cache size in GB
+        """
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.max_cache_size_bytes = int(max_cache_size_gb * 1024 * 1024 * 1024)
+
+        # In-memory cache for current session
+        self._memory_cache: dict[str, dict] = {}
+
+        logger.info(f"FeatureCache initialized: {cache_dir}")
+
+    def _get_video_hash(self, video_path: str) -> str:
+        """
+        Generate a hash for the video file.
+
+        Uses file size + first/last 1MB for fast hashing.
+        """
+        path = Path(video_path)
+        if not path.exists():
+            return ""
+
+        file_size = path.stat().st_size
+
+        # Read first and last 1MB for hashing
+        chunk_size = min(1024 * 1024, file_size)
+
+        hasher = hashlib.sha256()
+        hasher.update(str(file_size).encode())
+
+        with open(path, "rb") as f:
+            hasher.update(f.read(chunk_size))
+            if file_size > chunk_size * 2:
+                f.seek(-chunk_size, 2)
+                hasher.update(f.read(chunk_size))
+
+        return hasher.hexdigest()[:16]
+
+    def _get_cache_path(self, video_path: str) -> Path:
+        """Get cache file path for a video."""
+        video_hash = self._get_video_hash(video_path)
+        video_name = Path(video_path).stem
+        return self.cache_dir / f"{video_name}_{video_hash}.pt"
+
+    def has_features(self, video_path: str) -> bool:
+        """Check if features are cached for this video."""
+        # Check memory cache first
+        cache_key = self._get_video_hash(video_path)
+        if cache_key in self._memory_cache:
+            return True
+
+        # Check disk cache
+        cache_path = self._get_cache_path(video_path)
+        return cache_path.exists()
+
+    def load_features(self, video_path: str) -> Optional[dict]:
+        """
+        Load cached features for a video.
+
+        Returns:
+            Dictionary of features or None if not cached
+        """
+        cache_key = self._get_video_hash(video_path)
+
+        # Check memory cache
+        if cache_key in self._memory_cache:
+            logger.info(f"Loaded features from memory cache")
+            return self._memory_cache[cache_key]
+
+        # Check disk cache
+        cache_path = self._get_cache_path(video_path)
+        if cache_path.exists():
+            try:
+                features = torch.load(cache_path, map_location="cpu", weights_only=False)
+                self._memory_cache[cache_key] = features
+                logger.info(f"Loaded features from disk cache: {cache_path}")
+                return features
+            except Exception as e:
+                logger.warning(f"Failed to load cache: {e}")
+                cache_path.unlink(missing_ok=True)
+
+        return None
+
+    def save_features(self, video_path: str, features: dict) -> None:
+        """
+        Save features to cache.
+
+        Args:
+            video_path: Path to the video file
+            features: Dictionary of extracted features
+        """
+        cache_key = self._get_video_hash(video_path)
+        cache_path = self._get_cache_path(video_path)
+
+        # Save to memory
+        self._memory_cache[cache_key] = features
+
+        # Save to disk
+        try:
+            # Ensure we don't exceed cache size
+            self._cleanup_old_cache()
+
+            torch.save(features, cache_path)
+            logger.info(f"Saved features to cache: {cache_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save cache: {e}")
+
+    def _cleanup_old_cache(self) -> None:
+        """Remove old cache files if exceeding size limit."""
+        cache_files = list(self.cache_dir.glob("*.pt"))
+        if not cache_files:
+            return
+
+        # Calculate total size
+        total_size = sum(f.stat().st_size for f in cache_files)
+
+        if total_size > self.max_cache_size_bytes:
+            # Sort by modification time (oldest first)
+            cache_files.sort(key=lambda f: f.stat().st_mtime)
+
+            # Remove oldest until under limit
+            while total_size > self.max_cache_size_bytes * 0.8 and cache_files:
+                oldest = cache_files.pop(0)
+                total_size -= oldest.stat().st_size
+                oldest.unlink()
+                logger.info(f"Removed old cache: {oldest}")
+
+    def clear(self) -> None:
+        """Clear all cached features."""
+        self._memory_cache.clear()
+        for cache_file in self.cache_dir.glob("*.pt"):
+            cache_file.unlink()
+        logger.info("Cleared all feature caches")
+
+    def get_cache_stats(self) -> dict:
+        """Get cache statistics."""
+        cache_files = list(self.cache_dir.glob("*.pt"))
+        total_size = sum(f.stat().st_size for f in cache_files)
+
+        return {
+            "num_cached_videos": len(cache_files),
+            "total_size_mb": total_size / (1024 * 1024),
+            "memory_cache_entries": len(self._memory_cache),
+        }
+
+
+# =============================================================================
+# Response Confidence Scorer
+# =============================================================================
+
+class ConfidenceScorer:
+    """
+    Estimates confidence scores for model responses.
+
+    Factors considered:
+    - Amount of relevant context available
+    - Specificity of the question
+    - Presence of timestamp citations in response
+    - Token probability statistics (if available)
+
+    Example:
+        >>> scorer = ConfidenceScorer()
+        >>> confidence = scorer.score_response(
+        ...     query="What happened at 5:30?",
+        ...     response="The player defeated the boss at [05:30].",
+        ...     context_events=events,
+        ... )
+        >>> print(f"Confidence: {confidence:.2f}")
+    """
+
+    def __init__(self):
+        self.min_events_for_high_confidence = 3
+        self.timestamp_citation_pattern = re.compile(r'\[?\d{1,2}:\d{2}\]?')
+
+    def score_response(
+        self,
+        query: str,
+        response: str,
+        context_events: Optional[list] = None,
+        token_probs: Optional[list[float]] = None,
+    ) -> float:
+        """
+        Score the confidence of a response.
+
+        Args:
+            query: The user's question
+            response: The model's response
+            context_events: Timeline events used for context
+            token_probs: Optional token probabilities from generation
+
+        Returns:
+            Confidence score between 0.0 and 1.0
+        """
+        scores = []
+
+        # Factor 1: Context availability (0.0 - 0.3)
+        if context_events:
+            num_events = len(context_events)
+            if num_events >= self.min_events_for_high_confidence:
+                scores.append(0.3)
+            else:
+                scores.append(0.1 * num_events)
+        else:
+            scores.append(0.0)
+
+        # Factor 2: Response contains timestamp citations (0.0 - 0.25)
+        citations = self.timestamp_citation_pattern.findall(response)
+        if citations:
+            scores.append(min(0.25, 0.05 * len(citations)))
+        else:
+            scores.append(0.0)
+
+        # Factor 3: Response length and structure (0.0 - 0.25)
+        if len(response) > 50:
+            # Check for reasoning structure
+            has_reasoning = "**Reasoning:**" in response or "because" in response.lower()
+            has_answer = "**Answer:**" in response
+
+            if has_reasoning and has_answer:
+                scores.append(0.25)
+            elif has_reasoning or has_answer:
+                scores.append(0.15)
+            else:
+                scores.append(0.1)
+        else:
+            scores.append(0.05)
+
+        # Factor 4: Query specificity match (0.0 - 0.2)
+        query_has_timestamp = bool(re.search(r'\d{1,2}:\d{2}', query))
+        response_has_timestamp = bool(citations)
+
+        if query_has_timestamp and response_has_timestamp:
+            scores.append(0.2)
+        elif not query_has_timestamp:
+            scores.append(0.15)  # General questions get baseline
+        else:
+            scores.append(0.05)  # Asked about time but no citation
+
+        # Combine scores
+        total_confidence = sum(scores)
+
+        # Apply token probability adjustment if available
+        if token_probs:
+            avg_prob = sum(token_probs) / len(token_probs)
+            total_confidence *= (0.5 + 0.5 * avg_prob)
+
+        return min(1.0, max(0.0, total_confidence))
 
 
 # =============================================================================
@@ -101,23 +699,50 @@ class ReasoningCoreConfig:
         "speech", "explosion", "alert", "damage"
     ])
 
-    # System prompt
+    # System prompt with tool calling support
     system_prompt: str = """You are an expert gameplay analyst. You have access to:
-1. A timeline of events extracted from the video (OCR, speech, visual detections)
-2. The current video frame for visual grounding
-3. An entity knowledge base tracking game objects
+1. A complete timeline of events extracted from the entire video (OCR text, speech transcription, visual detections)
+2. Representative video frames for visual grounding
+3. An entity knowledge base tracking game objects across the video
 
-IMPORTANT: Before answering, show your reasoning step-by-step:
-1. First, identify the relevant events and timestamps from the context
-2. Then, explain how these events connect to the question
-3. Finally, provide your answer with specific timestamp citations
+IMPORTANT: You are analyzing the FULL VIDEO, not just a single frame. Use the timeline context to understand what happened throughout the entire video.
 
-Format your response as:
+## Available Tools
+
+You have access to the following tool for looking up external game information:
+
+**search_web(query: str)** - Search the web for game-related information including:
+- Boss strategies and weaknesses
+- Game mechanics and lore
+- Character abilities and stats
+- Item locations and effects
+
+To use a tool, output a tool call in this EXACT format (on its own line):
+<tool_call>search_web("your search query here")</tool_call>
+
+When to use tools:
+- When asked about game-specific knowledge not visible in the video (e.g., "what is this boss weak to?")
+- When the user asks about strategies, lore, or mechanics
+- When you need additional context to provide a complete answer
+
+After receiving tool results, incorporate them into your final answer.
+
+## Response Format
+
+For the FIRST question about a video, provide full reasoning:
 **Reasoning:**
-[Your step-by-step analysis here]
+[Brief analysis of key events - keep this concise, max 3-4 sentences]
 
 **Answer:**
-[Your final answer with timestamp citations]"""
+[Your answer with timestamp citations]
+
+For FOLLOW-UP questions:
+- DO NOT repeat context you've already provided
+- DO NOT re-describe the video or boss fight
+- Focus ONLY on answering the new question directly
+- Keep your answer brief and specific
+
+If you need to cite timestamps, use format [MM:SS]."""
 
 
 # =============================================================================
@@ -202,6 +827,162 @@ class SpecialTokens:
                 lines.append(f"{ts_token} {event.description}")
         
         return "\n".join(lines)
+
+
+# =============================================================================
+# Tool Call Parser (Autonomous Tool Calling)
+# =============================================================================
+
+@dataclass
+class ToolCall:
+    """Represents a parsed tool call from model output."""
+    tool_name: str
+    arguments: str
+    raw_match: str
+
+
+class ToolCallParser:
+    """
+    Parses and executes tool calls from model output.
+    
+    Enables ChatGPT-like autonomous tool calling where the model
+    can decide to search for information when needed.
+    
+    Example model output:
+        I need more information about this boss.
+        <tool_call>search_web("Tyronoe the Ferryman weakness")</tool_call>
+    """
+    
+    # Pattern to match tool calls: <tool_call>tool_name("args")</tool_call>
+    TOOL_CALL_PATTERN = re.compile(
+        r'<tool_call>\s*(\w+)\s*\(\s*["\'](.+?)["\']\s*\)\s*</tool_call>',
+        re.IGNORECASE | re.DOTALL
+    )
+    
+    def __init__(self, knowledge_searcher=None):
+        """
+        Initialize tool call parser.
+        
+        Args:
+            knowledge_searcher: GameKnowledgeSearch instance for web lookups
+        """
+        self._knowledge_searcher = knowledge_searcher
+        self._available_tools = {"search_web"}
+    
+    def parse_tool_calls(self, text: str) -> list[ToolCall]:
+        """
+        Parse tool calls from model output.
+        
+        Args:
+            text: Model output text
+            
+        Returns:
+            List of ToolCall objects found in the text
+        """
+        tool_calls = []
+        
+        for match in self.TOOL_CALL_PATTERN.finditer(text):
+            tool_name = match.group(1).lower()
+            arguments = match.group(2)
+            
+            if tool_name in self._available_tools:
+                tool_calls.append(ToolCall(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    raw_match=match.group(0),
+                ))
+        
+        return tool_calls
+    
+    def has_tool_calls(self, text: str) -> bool:
+        """Check if text contains any tool calls."""
+        return bool(self.TOOL_CALL_PATTERN.search(text))
+    
+    def execute_tool(self, tool_call: ToolCall) -> str:
+        """
+        Execute a single tool call.
+        
+        Args:
+            tool_call: The tool call to execute
+            
+        Returns:
+            Tool execution result as formatted string
+        """
+        logger.info(f"Executing tool: {tool_call.tool_name}({tool_call.arguments})")
+        
+        if tool_call.tool_name == "search_web":
+            return self._execute_search(tool_call.arguments)
+        else:
+            return f"[Unknown tool: {tool_call.tool_name}]"
+    
+    def _execute_search(self, query: str) -> str:
+        """Execute web search and format results."""
+        if not self._knowledge_searcher:
+            # Fallback to direct DuckDuckGo search
+            try:
+                from duckduckgo_search import DDGS
+                
+                results = []
+                with DDGS() as ddgs:
+                    for r in ddgs.text(query, max_results=5):
+                        title = r.get("title", "")
+                        body = r.get("body", "")[:200]
+                        results.append(f"- **{title}**: {body}")
+                
+                if results:
+                    return "## Web Search Results\n\n" + "\n".join(results)
+                else:
+                    return "[No search results found]"
+                    
+            except Exception as e:
+                logger.warning(f"Direct search failed: {e}")
+                return f"[Search failed: {e}]"
+        else:
+            # Use the knowledge searcher
+            return self._knowledge_searcher.execute_tool_call(query, "general")
+    
+    def execute_all_tools(self, text: str) -> tuple[str, list[str]]:
+        """
+        Parse and execute all tool calls in text.
+        
+        Args:
+            text: Model output with potential tool calls
+            
+        Returns:
+            Tuple of (text_with_tools_removed, list_of_tool_results)
+        """
+        tool_calls = self.parse_tool_calls(text)
+        
+        if not tool_calls:
+            return text, []
+        
+        results = []
+        cleaned_text = text
+        
+        for tc in tool_calls:
+            # Execute the tool
+            result = self.execute_tool(tc)
+            results.append(result)
+            
+            # Remove the tool call from text
+            cleaned_text = cleaned_text.replace(tc.raw_match, "")
+        
+        return cleaned_text.strip(), results
+    
+    def format_tool_results_for_prompt(self, results: list[str]) -> str:
+        """Format tool results for inclusion in follow-up prompt."""
+        if not results:
+            return ""
+        
+        formatted = "\n\n## Tool Results\n\n"
+        for i, result in enumerate(results, 1):
+            if len(results) > 1:
+                formatted += f"### Result {i}\n{result}\n\n"
+            else:
+                formatted += result + "\n"
+        
+        formatted += "\nNow use these results to provide a complete answer to the user's question.\n"
+        return formatted
 
 
 # =============================================================================
@@ -859,16 +1640,24 @@ class VisualInputProcessor:
 class QwenVLCore:
     """
     Main orchestrator for the Perception-Reasoning Loop.
-    
+
     Integrates:
     - TimelineRetriever for context retrieval
     - VisualInputProcessor for frame handling
     - Qwen3-VL for reasoning and response generation
-    
+    - ConversationHistory for multi-turn support
+    - ConfidenceScorer for response confidence estimation
+
     Example:
         >>> core = QwenVLCore()
-        >>> response = core.reason(
+        >>> response, confidence = core.reason(
         ...     query="What happened at 5:30?",
+        ...     current_frame=frame_image,
+        ...     timeline_indexer=timeline,
+        ... )
+        >>> # Follow-up question uses conversation context
+        >>> response, confidence = core.reason(
+        ...     query="What happened next?",
         ...     current_frame=frame_image,
         ...     timeline_indexer=timeline,
         ... )
@@ -878,16 +1667,127 @@ class QwenVLCore:
         self,
         config: Optional[ReasoningCoreConfig] = None,
         lora_path: Optional[str] = None,
+        conversation_history: Optional[ConversationHistory] = None,
+        enable_web_search: bool = True,
+        game_name: Optional[str] = None,
     ):
         self.config = config or ReasoningCoreConfig()
         self.lora_path = lora_path
         self.retriever = TimelineRetriever(self.config)
         self.visual_processor = VisualInputProcessor(self.config)
 
+        # Multi-turn conversation support
+        self.conversation_history = conversation_history or ConversationHistory()
+
+        # Confidence scoring
+        self.confidence_scorer = ConfidenceScorer()
+
+        # Web search for game knowledge
+        self.enable_web_search = enable_web_search
+        self._knowledge_searcher = None
+        self._game_detector = None
+        
+        # Tool call parser for autonomous tool calling (must be before _init_search_tools)
+        self._tool_parser: Optional[ToolCallParser] = None
+        
+        if enable_web_search:
+            self._init_search_tools(game_name)
+
         self._model = None
         self._processor = None
 
-        logger.info("QwenVLCore initialized")
+        # Track last retrieved events for confidence scoring
+        self._last_retrieved_events: list = []
+
+        # Track search results for context
+        self._last_search_results: Optional[str] = None
+
+        logger.info("QwenVLCore initialized with multi-turn conversation and web search support")
+
+    def _init_search_tools(self, game_name: Optional[str] = None) -> None:
+        """Initialize web search tools and tool call parser."""
+        try:
+            from agent_core.game_knowledge_search import (
+                GameKnowledgeSearcher,
+                GameDetector,
+            )
+
+            self._knowledge_searcher = GameKnowledgeSearcher()
+            self._game_detector = GameDetector()
+            
+            # Initialize tool call parser with knowledge searcher
+            self._tool_parser = ToolCallParser(knowledge_searcher=self._knowledge_searcher)
+
+            if game_name:
+                self._knowledge_searcher.set_game_context(game_name)
+                logger.info(f"Game context set: {game_name}")
+
+        except ImportError as e:
+            logger.warning(f"Could not initialize search tools: {e}")
+            self.enable_web_search = False
+            # Still create tool parser without knowledge searcher (uses direct DuckDuckGo)
+            self._tool_parser = ToolCallParser()
+
+    def set_game_context(self, game_name: str, genre: Optional[str] = None) -> None:
+        """Set the current game being analyzed for better search results."""
+        if self._knowledge_searcher:
+            self._knowledge_searcher.set_game_context(game_name, genre)
+            logger.info(f"Game context updated: {game_name}")
+
+    def detect_game_from_content(
+        self,
+        ocr_results: Optional[list[dict]] = None,
+        speech_results: Optional[list[dict]] = None,
+    ) -> Optional[str]:
+        """
+        Auto-detect the game from video content.
+
+        Args:
+            ocr_results: OCR text detections from video
+            speech_results: Speech transcriptions from video
+
+        Returns:
+            Detected game name or None
+        """
+        if not self._game_detector:
+            return None
+
+        detected = None
+
+        if ocr_results:
+            context = self._game_detector.detect_from_ocr(ocr_results)
+            if context:
+                detected = context.game_name
+
+        if not detected and speech_results:
+            context = self._game_detector.detect_from_speech(speech_results)
+            if context:
+                detected = context.game_name
+
+        if detected and self._knowledge_searcher:
+            self._knowledge_searcher.set_game_context(detected)
+
+        return detected
+
+    def search_game_knowledge(
+        self,
+        query: str,
+        search_type: str = "general",
+    ) -> str:
+        """
+        Search for game-related information.
+
+        Args:
+            query: What to search for
+            search_type: Type of search - "general", "wiki", "guide", "lore"
+
+        Returns:
+            Formatted search results
+        """
+        if not self._knowledge_searcher:
+            return "Web search is not available."
+
+        return self._knowledge_searcher.execute_tool_call(query, search_type)
 
     def _load_model(self) -> None:
         """Lazy load Qwen3-VL model and processor."""
@@ -981,29 +1881,51 @@ class QwenVLCore:
         current_frame: Optional["Image.Image"] = None,
         region_tokens: Optional[str] = None,
         knowledge_base_context: Optional[str] = None,
+        include_conversation_history: bool = True,
+        web_search_results: Optional[str] = None,
     ) -> list[dict]:
         """
         Construct the message list for Qwen3-VL.
-        
+
         Args:
             query: User question
             timeline_context: Retrieved timeline events formatted as text
             current_frame: Optional current video frame
             region_tokens: Optional region descriptions from SAM/SigLIP
             knowledge_base_context: Optional KB export
-            
+            include_conversation_history: Whether to include prior conversation
+            web_search_results: Optional web search results for game knowledge
+
         Returns:
             List of message dicts for apply_chat_template
         """
         messages = []
 
-        # System message
+        # System message with conversation and search awareness
+        system_text = self.config.system_prompt
+
+        if include_conversation_history and self.conversation_history.get_turn_count() > 0:
+            system_text += "\n\nYou have access to the conversation history. Use it to understand follow-up questions and maintain context."
+
+        # Add game context if available
+        if self._knowledge_searcher and self._knowledge_searcher.game_context:
+            game_ctx = self._knowledge_searcher.game_context
+            if game_ctx.game_name:
+                system_text += f"\n\nCurrent game: **{game_ctx.game_name}**"
+                if game_ctx.game_genre:
+                    system_text += f" ({game_ctx.game_genre})"
+
         messages.append({
             "role": "system",
-            "content": [{"type": "text", "text": self.config.system_prompt}],
+            "content": [{"type": "text", "text": system_text}],
         })
 
-        # Build user content
+        # Add conversation history as prior messages
+        if include_conversation_history:
+            history_messages = self.conversation_history.get_messages_for_chat()
+            messages.extend(history_messages)
+
+        # Build user content for current query
         user_content = []
 
         # Add current frame if provided
@@ -1023,6 +1945,16 @@ class QwenVLCore:
 
         if knowledge_base_context:
             context_parts.append("## Entity Knowledge Base\n" + knowledge_base_context)
+
+        # Add web search results if available
+        if web_search_results:
+            context_parts.append(web_search_results)
+
+        # Add conversation history summary if it's a follow-up question
+        if include_conversation_history and self.conversation_history.is_follow_up_query(query):
+            conv_context = self.conversation_history.get_context_for_prompt(max_recent_turns=4)
+            if conv_context:
+                context_parts.append("## Recent Conversation\n" + conv_context)
 
         # Add context as text
         if context_parts:
@@ -1094,45 +2026,63 @@ class QwenVLCore:
         timeline_indexer=None,
         knowledge_base=None,
         region_detections: Optional[list[dict]] = None,
-    ) -> str:
+        video_timestamp: Optional[float] = None,
+        track_conversation: bool = True,
+        return_confidence: bool = False,
+    ) -> Union[str, tuple[str, float]]:
         """
-        Execute the full Perception-Reasoning Loop.
-        
-        This is the main entry point for the agent.
-        
+        Execute the full Perception-Reasoning Loop with multi-turn support.
+
+        This is the main entry point for the agent. Automatically tracks
+        conversation history for follow-up questions.
+
         Args:
             query: User question
             current_frame: Optional current video frame for visual grounding
             timeline_indexer: TimelineIndexer with indexed events
             knowledge_base: Optional KnowledgeBaseBuilder for entity context
             region_detections: Optional SAM/SigLIP region data
-            
+            video_timestamp: Optional timestamp of current frame
+            track_conversation: Whether to track this exchange in history
+            return_confidence: Whether to return confidence score
+
         Returns:
-            Model response string
+            If return_confidence is False: Model response string
+            If return_confidence is True: Tuple of (response, confidence_score)
         """
         self._load_model()
 
         if self._processor is None:
-            return "[Error: Qwen3-VL model not loaded]"
+            error_msg = "[Error: Qwen3-VL model not loaded]"
+            return (error_msg, 0.0) if return_confidence else error_msg
 
-        # Step 1: Retrieve relevant context
+        # Step 1: Handle follow-up questions
+        is_follow_up = self.conversation_history.is_follow_up_query(query)
+        if is_follow_up:
+            logger.info("Detected follow-up question, using conversation context")
+            # For follow-ups like "what happened next?", use last mentioned timestamp
+            if video_timestamp is None:
+                video_timestamp = self.conversation_history.get_last_mentioned_timestamp()
+
+        # Step 2: Retrieve relevant context
         logger.info(f"Processing query: {query[:50]}...")
 
         if timeline_indexer is not None:
             self.retriever.index_timeline(timeline_indexer)
 
         events = self.retriever.hybrid_retrieve(query, timeline_indexer)
+        self._last_retrieved_events = events  # Store for confidence scoring
         timeline_context = self.format_timeline_context(events)
         logger.info(f"Retrieved {len(events)} events")
 
-        # Step 2: Process visual input
+        # Step 3: Process visual input
         region_tokens = None
         if region_detections:
             region_tokens = self.visual_processor.process_region_tokens(
                 region_detections
             )
 
-        # Step 3: Get knowledge base context
+        # Step 4: Get knowledge base context
         kb_context = None
         if knowledge_base is not None:
             kb_context = knowledge_base.export_for_llm(
@@ -1140,16 +2090,17 @@ class QwenVLCore:
                 max_relationships=20,
             )
 
-        # Step 4: Build prompt
+        # Step 5: Build prompt (with conversation history)
         messages = self.build_prompt(
             query=query,
             timeline_context=timeline_context,
             current_frame=current_frame,
             region_tokens=region_tokens,
             knowledge_base_context=kb_context,
+            include_conversation_history=track_conversation,
         )
 
-        # Step 5: Prepare inputs
+        # Step 6: Prepare inputs
         try:
             # Check if we have images
             has_image = current_frame is not None
@@ -1199,9 +2150,10 @@ class QwenVLCore:
 
         except Exception as e:
             logger.error(f"Failed to prepare inputs: {e}")
-            return f"[Error preparing inputs: {e}]"
+            error_msg = f"[Error preparing inputs: {e}]"
+            return (error_msg, 0.0) if return_confidence else error_msg
 
-        # Step 6: Generate response
+        # Step 7: Generate response
         try:
             with torch.no_grad():
                 generated_ids = self._model.generate(
@@ -1225,11 +2177,61 @@ class QwenVLCore:
                 clean_up_tokenization_spaces=False,
             )[0]
 
-            return response.strip()
+            response = response.strip()
+
+            # Step 8: Track conversation
+            if track_conversation:
+                self.conversation_history.add_user_message(
+                    query,
+                    video_timestamp=video_timestamp,
+                )
+
+            # Step 9: Calculate confidence score
+            confidence = self.confidence_scorer.score_response(
+                query=query,
+                response=response,
+                context_events=self._last_retrieved_events,
+            )
+
+            # Step 10: Track assistant response with confidence
+            if track_conversation:
+                self.conversation_history.add_assistant_message(
+                    response,
+                    confidence=confidence,
+                )
+
+            logger.info(f"Response generated (confidence: {confidence:.2f})")
+
+            if return_confidence:
+                return response, confidence
+            return response
 
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             return f"[Error during generation: {e}]"
+
+    def clear_conversation(self) -> None:
+        """Clear conversation history to start a fresh session."""
+        self.conversation_history.clear()
+        logger.info("Conversation history cleared")
+
+    def save_conversation(self, path: str) -> None:
+        """Save conversation history to file."""
+        self.conversation_history.save(path)
+
+    def load_conversation(self, path: str) -> None:
+        """Load conversation history from file."""
+        self.conversation_history = ConversationHistory.load(path)
+
+    def get_conversation_summary(self) -> dict:
+        """Get a summary of the current conversation state."""
+        return {
+            "turn_count": self.conversation_history.get_turn_count(),
+            "timestamps_mentioned": self.conversation_history.get_mentioned_timestamps(),
+            "last_query": self.conversation_history.get_last_user_query(),
+            "last_response": self.conversation_history.get_last_assistant_response()[:100] + "..."
+                if self.conversation_history.get_last_assistant_response() else None,
+        }
 
     def reason_streaming(
         self,
@@ -1238,13 +2240,24 @@ class QwenVLCore:
         timeline_indexer=None,
         knowledge_base=None,
         region_detections: Optional[list[dict]] = None,
+        video_timestamp: Optional[float] = None,
+        track_conversation: bool = True,
     ):
         """
         Execute reasoning with streaming output (yields tokens as generated).
-        
+
         Same as reason() but yields each token as it's generated for
-        real-time display like ChatGPT.
-        
+        real-time display like ChatGPT. Also tracks conversation history.
+
+        Args:
+            query: User question
+            current_frame: Optional current video frame
+            timeline_indexer: TimelineIndexer with indexed events
+            knowledge_base: Optional KnowledgeBaseBuilder
+            region_detections: Optional SAM/SigLIP region data
+            video_timestamp: Optional timestamp of current frame
+            track_conversation: Whether to track this exchange in history
+
         Yields:
             str: Each new token/chunk of text as it's generated
         """
@@ -1254,13 +2267,21 @@ class QwenVLCore:
             yield "[Error: Qwen3-VL model not loaded]"
             return
 
-        # Prepare inputs (same as reason method)
+        # Handle follow-up questions
+        is_follow_up = self.conversation_history.is_follow_up_query(query)
+        if is_follow_up:
+            logger.info("Detected follow-up question, using conversation context")
+            if video_timestamp is None:
+                video_timestamp = self.conversation_history.get_last_mentioned_timestamp()
+
+        # Prepare inputs
         logger.info(f"Processing query (streaming): {query[:50]}...")
 
         if timeline_indexer is not None:
             self.retriever.index_timeline(timeline_indexer)
 
         events = self.retriever.hybrid_retrieve(query, timeline_indexer)
+        self._last_retrieved_events = events
         timeline_context = self.format_timeline_context(events)
 
         region_tokens = None
@@ -1282,7 +2303,15 @@ class QwenVLCore:
             current_frame=current_frame,
             region_tokens=region_tokens,
             knowledge_base_context=kb_context,
+            include_conversation_history=track_conversation,
         )
+
+        # Track user message before streaming
+        if track_conversation:
+            self.conversation_history.add_user_message(
+                query,
+                video_timestamp=video_timestamp,
+            )
 
         # Prepare inputs
         try:
@@ -1359,11 +2388,131 @@ class QwenVLCore:
             thread = Thread(target=self._model.generate, kwargs=generation_kwargs)
             thread.start()
 
-            # Yield tokens as they come
+            # Collect full response while yielding tokens
+            full_response = []
             for token in streamer:
+                full_response.append(token)
                 yield token
 
             thread.join()
+            
+            response_text = "".join(full_response).strip()
+            
+            # Check for tool calls in response
+            if self._tool_parser and self._tool_parser.has_tool_calls(response_text):
+                logger.info("Tool call detected in response, executing...")
+                yield "\n\n🔍 *Searching for additional information...*\n\n"
+                
+                # Execute tool calls
+                cleaned_text, tool_results = self._tool_parser.execute_all_tools(response_text)
+                
+                # Format tool results
+                tool_context = self._tool_parser.format_tool_results_for_prompt(tool_results)
+                
+                # Show search results to user
+                for result in tool_results:
+                    yield f"{result}\n\n"
+                
+                yield "---\n\n📝 *Generating complete answer with search results...*\n\n"
+                
+                # Build follow-up prompt with tool results
+                followup_messages = self.build_prompt(
+                    query=f"{query}\n\n{tool_context}",
+                    timeline_context=timeline_context,
+                    current_frame=current_frame,
+                    region_tokens=region_tokens,
+                    knowledge_base_context=kb_context,
+                    include_conversation_history=False,  # Already included context
+                )
+                
+                # Generate follow-up response with tool results
+                try:
+                    if has_image:
+                        try:
+                            from qwen_vl_utils import process_vision_info
+                            followup_text = self._processor.apply_chat_template(
+                                followup_messages,
+                                tokenize=False,
+                                add_generation_prompt=True,
+                            )
+                            images, videos, _ = process_vision_info(
+                                followup_messages,
+                                image_patch_size=16,
+                                return_video_kwargs=True,
+                            )
+                            followup_inputs = self._processor(
+                                text=followup_text,
+                                images=images,
+                                videos=videos,
+                                do_resize=False,
+                                return_tensors="pt",
+                            )
+                        except ImportError:
+                            followup_inputs = self._processor.apply_chat_template(
+                                followup_messages,
+                                tokenize=True,
+                                add_generation_prompt=True,
+                                return_dict=True,
+                                return_tensors="pt",
+                            )
+                    else:
+                        followup_inputs = self._processor.apply_chat_template(
+                            followup_messages,
+                            tokenize=True,
+                            add_generation_prompt=True,
+                            return_dict=True,
+                            return_tensors="pt",
+                        )
+                    
+                    followup_inputs = followup_inputs.to(self._model.device)
+                    
+                    # Create new streamer for follow-up
+                    followup_streamer = TextIteratorStreamer(
+                        self._processor.tokenizer,
+                        skip_prompt=True,
+                        skip_special_tokens=True,
+                    )
+                    
+                    followup_kwargs = dict(
+                        **followup_inputs,
+                        max_new_tokens=self.config.max_new_tokens,
+                        temperature=self.config.temperature,
+                        top_p=self.config.top_p,
+                        top_k=self.config.top_k,
+                        do_sample=True,
+                        streamer=followup_streamer,
+                    )
+                    
+                    followup_thread = Thread(target=self._model.generate, kwargs=followup_kwargs)
+                    followup_thread.start()
+                    
+                    followup_response = []
+                    for token in followup_streamer:
+                        followup_response.append(token)
+                        yield token
+                    
+                    followup_thread.join()
+                    
+                    # Use the follow-up response as final
+                    response_text = "".join(followup_response).strip()
+                    
+                except Exception as e:
+                    logger.warning(f"Follow-up generation failed: {e}")
+                    # Fall back to original response without tool call tags
+                    response_text = cleaned_text
+
+            # Track assistant response after streaming completes
+            if track_conversation:
+                confidence = self.confidence_scorer.score_response(
+                    query=query,
+                    response=response_text,
+                    context_events=self._last_retrieved_events,
+                )
+                self.conversation_history.add_assistant_message(
+                    response_text,
+                    confidence=confidence,
+                )
+                logger.info(f"Streaming response tracked (confidence: {confidence:.2f})")
 
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")

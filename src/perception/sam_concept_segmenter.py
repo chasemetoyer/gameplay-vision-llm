@@ -169,7 +169,7 @@ class SAMConfig:
     # Model settings
     model_name: str = "facebook/sam3"
     device: str = "cuda"
-    dtype: torch.dtype = torch.float32  # Use float32 for compatibility with processor
+    dtype: torch.dtype = torch.float32  # Use float32 (TF32 still provides acceleration)
 
     # Segmentation thresholds
     mask_threshold: float = 0.0  # Logit threshold for mask binarization
@@ -181,9 +181,11 @@ class SAMConfig:
     occlusion_patience: int = 10  # Frames before OCCLUDED -> LOST
     lost_patience: int = 30  # Frames before LOST -> TERMINATED
 
-    # Performance
+    # Performance optimizations for A100/H100
     use_amp: bool = True  # Automatic mixed precision
     batch_points: int = 64  # Points per batch for prompt encoding
+    use_tf32: bool = True  # Enable TF32 for matmul (faster on Ampere+)
+    use_compile: bool = False  # torch.compile (experimental, can add latency)
 
 
 class Sam3ModelWrapper:
@@ -208,25 +210,36 @@ class Sam3ModelWrapper:
         self._last_image_embeddings = None
 
     def _load_model(self) -> None:
-        """Lazy load the SAM3 model and processor."""
+        """Lazy load the SAM3 model and processor with A100 optimizations."""
         if self._model is not None:
             return
 
         try:
             from transformers import Sam3Model, Sam3Processor
 
+            # Enable TF32 for faster matmul on A100/H100
+            if self.config.use_tf32 and torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                logger.info("TF32 enabled for faster matmul")
+
             logger.info(f"Loading SAM3 model: {self.config.model_name}")
             self._model = Sam3Model.from_pretrained(
                 self.config.model_name,
-                torch_dtype=torch.float32,  # Force float32 for compatibility with processor
+                torch_dtype=self.config.dtype,  # BF16 for A100/H100
             ).to(self.config.device)
-            self._model = self._model.float()  # Ensure float32 even if model was saved in float16
             self._model.eval()
 
             self._processor = Sam3Processor.from_pretrained(
                 self.config.model_name,
             )
-            logger.info("SAM3 model and processor loaded successfully")
+            
+            # Optional: torch.compile for additional speedup (experimental)
+            if self.config.use_compile and hasattr(torch, 'compile'):
+                logger.info("Compiling SAM3 model with torch.compile...")
+                self._model = torch.compile(self._model, mode="reduce-overhead")
+            
+            logger.info(f"SAM3 model loaded successfully (dtype={self.config.dtype})")
         except ImportError:
             logger.warning("Sam3Model/Sam3Processor not available in transformers.")
             logger.warning("Please update transformers: pip install -U transformers")
@@ -296,10 +309,15 @@ class Sam3ModelWrapper:
                 text=text_prompt,
                 return_tensors="pt",
             ).to(self.config.device)
+            
+            # Only convert pixel_values to model dtype (bfloat16)
+            # Other tensors like input_ids must remain as integers
+            if "pixel_values" in inputs:
+                inputs["pixel_values"] = inputs["pixel_values"].to(dtype=self.config.dtype)
+            
             logger.debug("SAM3: Processor done, running model inference...")
             
-            with torch.no_grad():
-                # Use torch.inference_mode for faster inference
+            with torch.inference_mode():
                 outputs = self._model(**inputs)
             logger.debug("SAM3: Model inference done, post-processing...")
 
@@ -316,11 +334,20 @@ class Sam3ModelWrapper:
                 mask_threshold=mask_threshold,
                 target_sizes=target_sizes,
             )
+            
+            # Debug: Log what we got
+            for i, result in enumerate(results):
+                masks = result.get("masks", None)
+                n_masks = masks.shape[0] if masks is not None and hasattr(masks, 'shape') else 0
+                logger.debug(f"SAM3: Result {i} has {n_masks} masks")
+            
             logger.debug("SAM3: Post-processing done")
 
             return results
         except Exception as e:
             logger.warning(f"SAM3 segment_with_text failed: {e}")
+            import traceback
+            logger.warning(f"SAM3 traceback: {traceback.format_exc()}")
             return self._placeholder_segment(image)
 
     def segment_with_boxes(

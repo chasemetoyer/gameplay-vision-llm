@@ -639,61 +639,106 @@ def process_video(
     use_sam: bool = True,
     projector_weights: str = "outputs/projector_weights.pt",
     lora_path: str = "outputs/lora_adapter",
+    use_cache: bool = True,
+    cache_dir: str = "data/cache",
 ):
     """
     Process video and return initialized PerceptionReasoningLoop.
+
+    Supports feature caching to avoid reprocessing the same video.
     """
     from agent_core.qwen_reasoning_core import (
         PerceptionReasoningLoop,
         ReasoningCoreConfig,
+        FeatureCache,
     )
-    
+
     logger.info("=" * 60)
     logger.info("PROCESSING VIDEO")
     logger.info("=" * 60)
-    
-    # 1. Extract frames
-    logger.info("\n1. Extracting frames...")
-    frames = extract_frames(video_path, fps=fps)
-    
-    # 2. Run SAM3 detection (if enabled)
-    sam_results = None
-    if use_sam:
-        logger.info("\n2a. Running SAM3 visual detection...")
-        sam_results = run_sam3_detection(frames, device)
-    
-    # 3. Extract embeddings
-    logger.info("\n2b. Extracting multimodal embeddings...")
-    siglip_embs = extract_siglip_embeddings(frames, sam_results=sam_results, device=device)
-    videomae_embs = extract_videomae_embeddings(frames, device)
-    wav2vec_embs = extract_wav2vec_embeddings(video_path, device)
-    
-    # 4. Run OCR extraction
-    logger.info("\n3. Extracting text (OCR)...")
-    ocr_results = run_ocr_extraction(frames, device)
-    
-    # 5. Run speech transcription
-    logger.info("\n4. Transcribing speech (Whisper)...")
-    speech_results = run_speech_transcription(video_path, device)
-    
+
+    # Initialize feature cache
+    feature_cache = FeatureCache(cache_dir=cache_dir) if use_cache else None
+
+    # Check if we have cached features
+    cached_features = None
+    if feature_cache and feature_cache.has_features(video_path):
+        print("\nFound cached features! Loading from cache...")
+        cached_features = feature_cache.load_features(video_path)
+
+    if cached_features:
+        # Use cached features
+        frames = cached_features.get("frames", [])
+        sam_results = cached_features.get("sam_results")
+        siglip_embs = cached_features.get("siglip", [])
+        videomae_embs = cached_features.get("videomae", [])
+        wav2vec_embs = cached_features.get("wav2vec", [])
+        ocr_results = cached_features.get("ocr_results", [])
+        speech_results = cached_features.get("speech_results", [])
+
+        print(f"Loaded {len(frames)} frames and {len(siglip_embs)} embeddings from cache")
+
+    else:
+        # Extract features from scratch
+        # 1. Extract frames
+        logger.info("\n1. Extracting frames...")
+        frames = extract_frames(video_path, fps=fps)
+
+        # 2. Run SAM3 detection (if enabled)
+        sam_results = None
+        if use_sam:
+            logger.info("\n2a. Running SAM3 visual detection...")
+            sam_results = run_sam3_detection(frames, device)
+
+        # 3. Extract embeddings
+        logger.info("\n2b. Extracting multimodal embeddings...")
+        siglip_embs = extract_siglip_embeddings(frames, sam_results=sam_results, device=device)
+        videomae_embs = extract_videomae_embeddings(frames, device)
+        wav2vec_embs = extract_wav2vec_embeddings(video_path, device)
+
+        # 4. Run OCR extraction
+        logger.info("\n3. Extracting text (OCR)...")
+        ocr_results = run_ocr_extraction(frames, device)
+
+        # 5. Run speech transcription
+        logger.info("\n4. Transcribing speech (Whisper)...")
+        speech_results = run_speech_transcription(video_path, device)
+
+        # Cache features for future use (excluding full frames to save space)
+        if feature_cache:
+            # Store frame timestamps and thumbnails instead of full frames
+            frame_metadata = [(ts, f.size) for ts, f in frames]
+            cache_data = {
+                "frames": frames,  # Full frames for now, could optimize later
+                "frame_metadata": frame_metadata,
+                "sam_results": sam_results,
+                "siglip": siglip_embs,
+                "videomae": videomae_embs,
+                "wav2vec": wav2vec_embs,
+                "ocr_results": ocr_results,
+                "speech_results": speech_results,
+            }
+            feature_cache.save_features(video_path, cache_data)
+            print("Features cached for future use")
+
     # 6. Build timeline index
     logger.info("\n5. Building timeline index...")
     timeline_indexer = build_timeline_index(ocr_results, speech_results, sam_results)
-    
+
     # 7. Initialize loop with projectors and timeline
     logger.info("\n6. Initializing PerceptionReasoningLoop...")
     config = ReasoningCoreConfig(device=device)
-    
+
     loop = PerceptionReasoningLoop(
         config=config,
         timeline_indexer=timeline_indexer,
         projector_weights_path=projector_weights if os.path.exists(projector_weights) else None,
         lora_path=lora_path if os.path.exists(lora_path) else None,
     )
-    
+
     # Index the timeline for semantic retrieval
     loop.reasoning_core.index_timeline(timeline_indexer)
-    
+
     # Store embeddings and detections for later use
     loop._cached_embeddings = {
         "siglip": siglip_embs,
@@ -705,23 +750,26 @@ def process_video(
         "speech_results": speech_results,
         "timeline_indexer": timeline_indexer,
     }
-    
+
     # Print summary with explicit print (not logger)
     print("\n" + "=" * 60)
-    print("✅ VIDEO PROCESSING COMPLETE")
+    print("VIDEO PROCESSING COMPLETE")
     print("=" * 60)
-    print(f"   📹 Frames extracted: {len(frames)}")
+    print(f"   Frames extracted: {len(frames)}")
     if sam_results:
         total_det = sum(len(d["detections"]) for d in sam_results)
-        print(f"   🎯 SAM3 detections: {total_det}")
-    print(f"   🖼️  SigLIP embeddings: {len(siglip_embs)}")
-    print(f"   🎬 VideoMAE embeddings: {len(videomae_embs)}")
-    print(f"   🔊 Wav2Vec2 embeddings: {len(wav2vec_embs)}")
-    print(f"   📝 OCR text regions: {len(ocr_results)}")
-    print(f"   🎤 Speech segments: {len(speech_results)}")
-    print(f"   📋 Timeline events: {timeline_indexer.get_statistics()['total_events']}")
+        print(f"   SAM3 detections: {total_det}")
+    print(f"   SigLIP embeddings: {len(siglip_embs)}")
+    print(f"   VideoMAE embeddings: {len(videomae_embs)}")
+    print(f"   Wav2Vec2 embeddings: {len(wav2vec_embs)}")
+    print(f"   OCR text regions: {len(ocr_results)}")
+    print(f"   Speech segments: {len(speech_results)}")
+    print(f"   Timeline events: {timeline_indexer.get_statistics()['total_events']}")
+    if feature_cache:
+        stats = feature_cache.get_cache_stats()
+        print(f"   Cache: {stats['num_cached_videos']} videos, {stats['total_size_mb']:.1f} MB")
     print("=" * 60)
-    
+
     return loop
 
 
@@ -776,12 +824,13 @@ def answer_query(loop, query: str, timestamp: Optional[float] = None) -> str:
 def answer_query_streaming(loop, query: str, timestamp: Optional[float] = None):
     """
     Answer a query with streaming output - yields tokens as they're generated.
+    Supports multi-turn conversation with follow-up questions.
     """
     import sys
-    
+
     # Get embeddings near timestamp (or all if not specified)
     cached = loop._cached_embeddings
-    
+
     # Get relevant embeddings
     if timestamp is not None:
         # Filter embeddings near timestamp
@@ -794,12 +843,12 @@ def answer_query_streaming(loop, query: str, timestamp: Optional[float] = None):
         siglip_near = cached["siglip"][:20]
         videomae_near = cached["videomae"][:10]
         wav2vec_near = cached["wav2vec"][:10]
-    
+
     # Stack embeddings
     siglip_tensor = torch.stack([e["embedding"] for e in siglip_near]) if siglip_near else None
     videomae_tensor = torch.stack([e["embedding"] for e in videomae_near]) if videomae_near else None
     wav2vec_tensor = torch.stack([e["embedding"] for e in wav2vec_near]) if wav2vec_near else None
-    
+
     # Get a frame for visual context
     frame = None
     if timestamp is not None and cached["frames"]:
@@ -807,68 +856,200 @@ def answer_query_streaming(loop, query: str, timestamp: Optional[float] = None):
         frame = closest_frame[1]
     elif cached["frames"]:
         frame = cached["frames"][len(cached["frames"]) // 2][1]
-    
+
     # Start loop and use streaming
     loop.start()
     loop.set_query(query)
-    
-    # Use streaming generation
+
+    # Use streaming generation with conversation tracking
     for token in loop.reasoning_core.reason_streaming(
         query=query,
         current_frame=frame,
         timeline_indexer=loop.timeline_indexer,
         knowledge_base=loop.knowledge_base,
+        video_timestamp=timestamp,
+        track_conversation=True,
     ):
         yield token
 
 
 def interactive_mode(loop):
-    """Interactive Q&A session with streaming output."""
+    """Interactive Q&A session with streaming output and multi-turn conversation."""
     import sys
-    
+
     print("\n" + "=" * 60)
-    print("🎮 INTERACTIVE GAMEPLAY ANALYSIS")
+    print("INTERACTIVE GAMEPLAY ANALYSIS")
     print("=" * 60)
     print("Commands:")
     print("  @<MM:SS> <question>  - Ask about specific timestamp")
     print("  <question>           - Ask about whole video")
+    print("  /clear               - Clear conversation history")
+    print("  /history             - Show conversation summary")
+    print("  /save <path>         - Save conversation to file")
+    print("  /load <path>         - Load conversation from file")
+    print("  /game <name>         - Set game context (e.g., /game Elden Ring)")
+    print("  /search <query>      - Search web for game info")
+    print("  /wiki <topic>        - Search game wiki for topic")
+    print("  /boss <name>         - Look up boss strategy")
     print("  quit                 - Exit")
+    print("=" * 60)
+    print("TIP: You can ask follow-up questions like 'What happened next?'")
     print("=" * 60 + "\n")
-    
+
+    # Try to auto-detect game from video content
+    try:
+        cached = loop._cached_embeddings
+        detected_game = loop.reasoning_core.detect_game_from_content(
+            ocr_results=cached.get("ocr_results", []),
+            speech_results=cached.get("speech_results", []),
+        )
+        if detected_game:
+            print(f"Auto-detected game: {detected_game}\n")
+    except Exception:
+        pass
+
     while True:
         try:
-            user_input = input("🎮 Your question: ").strip()
-            
+            # Show conversation context indicator
+            turn_count = loop.reasoning_core.conversation_history.get_turn_count()
+            if turn_count > 0:
+                prompt = f"[{turn_count} turns] Your question: "
+            else:
+                prompt = "Your question: "
+
+            user_input = input(prompt).strip()
+
             if user_input.lower() in ("quit", "exit", "q"):
                 print("Goodbye!")
                 break
-            
+
             if not user_input:
                 continue
-            
+
+            # Handle special commands
+            if user_input.startswith("/"):
+                if user_input == "/clear":
+                    loop.reasoning_core.clear_conversation()
+                    print("Conversation history cleared.\n")
+                    continue
+                elif user_input == "/history":
+                    summary = loop.reasoning_core.get_conversation_summary()
+                    print("\n--- Conversation Summary ---")
+                    print(f"Turns: {summary['turn_count']}")
+                    if summary['timestamps_mentioned']:
+                        ts_list = [f"{int(t//60)}:{int(t%60):02d}" for t in summary['timestamps_mentioned']]
+                        print(f"Timestamps discussed: {', '.join(ts_list)}")
+                    if summary['last_query']:
+                        print(f"Last query: {summary['last_query'][:50]}...")
+                    print("----------------------------\n")
+                    continue
+                elif user_input.startswith("/save "):
+                    path = user_input[6:].strip()
+                    try:
+                        loop.reasoning_core.save_conversation(path)
+                        print(f"Conversation saved to: {path}\n")
+                    except Exception as e:
+                        print(f"Failed to save: {e}\n")
+                    continue
+                elif user_input.startswith("/load "):
+                    path = user_input[6:].strip()
+                    try:
+                        loop.reasoning_core.load_conversation(path)
+                        print(f"Conversation loaded from: {path}\n")
+                    except Exception as e:
+                        print(f"Failed to load: {e}\n")
+                    continue
+                elif user_input.startswith("/game "):
+                    game_name = user_input[6:].strip()
+                    try:
+                        loop.reasoning_core.set_game_context(game_name)
+                        print(f"Game context set to: {game_name}\n")
+                    except Exception as e:
+                        print(f"Failed to set game: {e}\n")
+                    continue
+                elif user_input.startswith("/search "):
+                    search_query = user_input[8:].strip()
+                    print(f"\nSearching for: {search_query}...")
+                    try:
+                        results = loop.reasoning_core.search_game_knowledge(search_query, "general")
+                        print(results)
+                    except Exception as e:
+                        print(f"Search failed: {e}")
+                    print()
+                    continue
+                elif user_input.startswith("/wiki "):
+                    topic = user_input[6:].strip()
+                    print(f"\nSearching wiki for: {topic}...")
+                    try:
+                        results = loop.reasoning_core.search_game_knowledge(topic, "wiki")
+                        print(results)
+                    except Exception as e:
+                        print(f"Search failed: {e}")
+                    print()
+                    continue
+                elif user_input.startswith("/boss "):
+                    boss_name = user_input[6:].strip()
+                    print(f"\nLooking up boss strategy: {boss_name}...")
+                    try:
+                        results = loop.reasoning_core.search_game_knowledge(
+                            f"{boss_name} boss fight guide strategy",
+                            "guide"
+                        )
+                        print(results)
+                    except Exception as e:
+                        print(f"Search failed: {e}")
+                    print()
+                    continue
+                elif user_input.startswith("/lore "):
+                    topic = user_input[6:].strip()
+                    print(f"\nSearching lore for: {topic}...")
+                    try:
+                        results = loop.reasoning_core.search_game_knowledge(topic, "lore")
+                        print(results)
+                    except Exception as e:
+                        print(f"Search failed: {e}")
+                    print()
+                    continue
+                else:
+                    print(f"Unknown command: {user_input}\n")
+                    continue
+
             # Parse timestamp if provided
             timestamp = None
             query = user_input
-            
+
             ts_match = re.match(r'@(\d+):(\d+)\s+(.*)', user_input)
             if ts_match:
                 mins, secs, query = ts_match.groups()
                 timestamp = int(mins) * 60 + int(secs)
-                print(f"📍 Focusing on timestamp: {mins}:{secs}")
-            
-            print("\n🔍 Analyzing...\n")
-            print("📝 Response:")
-            
+                print(f"Focusing on timestamp: {mins}:{secs}")
+
+            # Check if this is a follow-up question
+            if loop.reasoning_core.conversation_history.is_follow_up_query(query):
+                print("(Follow-up question detected)")
+
+            print("\nAnalyzing...\n")
+            print("Response:")
+
             # Stream tokens as they're generated (like ChatGPT typing)
             for token in answer_query_streaming(loop, query, timestamp):
                 print(token, end="", flush=True)
-            
-            print("\n")  # New line after streaming completes
-            
+
+            # Show confidence after response
+            last_turn = loop.reasoning_core.conversation_history._turns[-1] if loop.reasoning_core.conversation_history._turns else None
+            if last_turn and "confidence" in last_turn.metadata:
+                confidence = last_turn.metadata["confidence"]
+                confidence_bar = "=" * int(confidence * 10)
+                print(f"\n\n[Confidence: {confidence:.0%} |{confidence_bar:<10}|]")
+            else:
+                print()
+
+            print()  # Extra newline for readability
+
         except KeyboardInterrupt:
             print("\n\nGoodbye!")
             break
-    
+
     loop.stop()
 
 
@@ -881,25 +1062,33 @@ def main():
     parser.add_argument("--fps", type=float, default=0.5, help="Frames per second to sample")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--use-sam", action="store_true", help="Use SAM3 for entity detection")
-    parser.add_argument("--projector-weights", default="outputs/projector_weights.pt", 
+    parser.add_argument("--projector-weights", default="outputs/projector_weights.pt",
                         help="Path to projector weights")
     parser.add_argument("--lora-path", default="outputs/lora_adapter",
                         help="Path to LoRA adapter")
     parser.add_argument("--output-dir", default="data/videos",
                         help="Directory for downloaded videos")
-    
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Disable feature caching (reprocess every time)")
+    parser.add_argument("--cache-dir", default="data/cache",
+                        help="Directory for cached features")
+    parser.add_argument("--game", type=str, default=None,
+                        help="Game name for web search context (e.g., 'Elden Ring')")
+    parser.add_argument("--no-search", action="store_true",
+                        help="Disable web search capability")
+
     args = parser.parse_args()
-    
+
     # Determine video source
     video_path = args.video
-    
+
     if is_youtube_url(args.video):
-        print(f"\n📺 Detected YouTube URL")
+        print(f"\nDetected YouTube URL")
         video_path = download_youtube(args.video, args.output_dir)
     elif not os.path.exists(args.video):
-        print(f"❌ Error: Video not found: {args.video}")
+        print(f"Error: Video not found: {args.video}")
         sys.exit(1)
-    
+
     # Process video
     loop = process_video(
         video_path=video_path,
@@ -908,8 +1097,19 @@ def main():
         use_sam=args.use_sam,
         projector_weights=args.projector_weights,
         lora_path=args.lora_path,
+        use_cache=not args.no_cache,
+        cache_dir=args.cache_dir,
     )
-    
+
+    # Set game context if provided
+    if args.game:
+        loop.reasoning_core.set_game_context(args.game)
+        print(f"Game context set: {args.game}")
+
+    # Disable search if requested
+    if args.no_search:
+        loop.reasoning_core.enable_web_search = False
+
     # Handle mode
     if args.interactive:
         interactive_mode(loop)
@@ -921,13 +1121,13 @@ def main():
             if ts_match:
                 mins, secs = ts_match.groups()
                 timestamp = int(mins) * 60 + int(secs)
-        
-        print("\n🔍 Analyzing...\n")
+
+        print("\nAnalyzing...\n")
         response = answer_query(loop, args.query, timestamp)
-        print(f"📝 Response:\n{response}")
+        print(f"Response:\n{response}")
         loop.stop()
     else:
-        print("❌ Error: Provide --query or use --interactive mode")
+        print("Error: Provide --query or use --interactive mode")
         sys.exit(1)
 
 
