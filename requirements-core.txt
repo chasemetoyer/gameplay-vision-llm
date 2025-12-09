@@ -43,6 +43,7 @@ sentence-transformers>=4.0.0
 fastapi>=0.115.0
 uvicorn>=0.34.0
 httpx>=0.28.0
+duckduckgo-search>=8.0.0  # For autonomous game knowledge search
 
 # ============================================
 # Data & Utilities
@@ -71,3 +72,11 @@ ipython>=8.0.0
 # flash-attn>=2.8.0 (from pre-built wheel)
 # paddlepaddle-gpu==3.2.0 (from Paddle wheel index)
 # paddleocr>=3.3.0
+
+# ============================================
+# SAM3 Requirement
+# ============================================
+# SAM3 (facebook/sam3) requires transformers>=5.0.0.dev0
+# The core requirement above (transformers>=4.47.0) is for non-SAM3 features.
+# For SAM3, setup_env.sh installs from git:
+#   pip install git+https://github.com/huggingface/transformers.git

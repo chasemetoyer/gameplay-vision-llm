@@ -66,16 +66,25 @@ fi
 # Uses requirements-core.txt which has flexible version constraints
 # ----------------------------------------------------------------------------
 echo ""
-echo "[4/6] Installing core dependencies from requirements-core.txt..."
+echo "[4/7] Installing core dependencies from requirements-core.txt..."
 pip install -r requirements-core.txt --quiet
 
 # ----------------------------------------------------------------------------
-# Step 5: Install PaddlePaddle GPU + PaddleOCR
+# Step 5: Install transformers from git for SAM3 support
+# SAM3 (facebook/sam3) requires transformers>=5.0.0.dev0
+# ----------------------------------------------------------------------------
+echo ""
+echo "[5/7] Installing transformers dev version for SAM3..."
+pip install git+https://github.com/huggingface/transformers.git --quiet
+echo "    ✅ Transformers dev version installed (required for SAM3)"
+
+# ----------------------------------------------------------------------------
+# Step 6: Install PaddlePaddle GPU + PaddleOCR
 # Must use official Paddle wheel index for GPU version with correct CUDA
 # PaddlePaddle 3.2.0 with CUDA 12.6 works best with modern systems
 # ----------------------------------------------------------------------------
 echo ""
-echo "[5/6] Installing PaddleOCR with GPU support..."
+echo "[6/7] Installing PaddleOCR with GPU support..."
 echo "    (Downloading from Paddle servers - this may take a few minutes)"
 
 # Try GPU version first from official Paddle wheel index
@@ -91,11 +100,11 @@ fi
 pip install paddleocr --quiet 2>/dev/null || echo "    ⚠️ PaddleOCR install failed (optional)"
 
 # ----------------------------------------------------------------------------
-# Step 6: Restore PyTorch CUDA libraries if needed
+# Step 7: Restore PyTorch CUDA libraries if needed
 # PaddlePaddle may downgrade some NVIDIA libraries, restore them for PyTorch
 # ----------------------------------------------------------------------------
 echo ""
-echo "[6/6] Ensuring PyTorch CUDA compatibility..."
+echo "[7/7] Ensuring PyTorch CUDA compatibility..."
 pip install nvidia-cublas-cu12==12.8.4.1 nvidia-cuda-cupti-cu12==12.8.90 \
     nvidia-cuda-nvrtc-cu12==12.8.93 nvidia-cuda-runtime-cu12==12.8.90 \
     nvidia-cudnn-cu12==9.10.2.21 nvidia-cufft-cu12==11.3.3.83 \
@@ -125,6 +134,7 @@ checks = [
     ('whisper', 'Whisper'),
     ('sentence_transformers', 'Sentence Transformers'),
     ('paddleocr', 'PaddleOCR'),
+    ('duckduckgo_search', 'DuckDuckGo Search'),
 ]
 
 passed = 0
