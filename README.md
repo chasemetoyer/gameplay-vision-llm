@@ -85,6 +85,8 @@ cd gameplay-vision-llm
 chmod +x setup_env.sh
 ./setup_env.sh
 
+**MUST DOWNLOAD TRANSFORMERS 5.0.0X DEV VERSION FOR COMPATIBILITY WITH SAM3**
+
 # Download trained weights from Hugging Face
 python -c "from huggingface_hub import snapshot_download; snapshot_download('cjm249/gameplay-vision-llm-adapters', local_dir='outputs')"
 ```
