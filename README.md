@@ -21,7 +21,6 @@ The final deployment validates the project’s ability to perform **long-horizon
 -   **Temporal Synthesis:** The system demonstrated the ability to synthesize detailed, chronological summaries of events spanning minutes of gameplay by retrieving context from the indexed timeline.
 
 ## Architecture
-![Generated Image December 06, 2025 - 1_11PM (1)](https://github.com/user-attachments/assets/4d83fb3b-f6f2-4a38-99d7-32990d162eb3)
 
 
 
