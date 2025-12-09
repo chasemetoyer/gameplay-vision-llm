@@ -1,7 +1,7 @@
 # Multimodal Gameplay Video Understanding with Vision-Language Models
 
 A research framework for multimodal video understanding and question-answering on gameplay footage, combining state-of-the-art vision encoders, audio processing, and large language models with trained projection adapters.
-
+Article I made describing what I am trying to do: https://medium.com/@cmetoyerbusiness/towards-a-cascaded-multimodal-pipeline-for-long-horizon-gameplay-analysis-25ed6a8630c9
 
 ## Trained Weights
 
