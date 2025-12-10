@@ -383,7 +383,7 @@ def test_temporal_module(result: SmokeTestResult) -> None:
             source_frame_count=16,
         )
         assert token.source_frame_count == 16
-        assert "CLIP" in repr(token)
+        assert "clip" in repr(token)
 
         # Create compressor (CPU only for smoke test)
         config.device = "cpu"
