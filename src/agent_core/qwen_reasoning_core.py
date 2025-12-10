@@ -1102,6 +1102,7 @@ class ProjectorBank:
         
         self._initialized = True
         logger.info(f"Loaded projector weights from {path}")
+        print(f"   ✅ Projector weights loaded: {path}")
     
     def save_weights(self, path: str) -> None:
         """Save projector weights."""
@@ -1836,11 +1837,13 @@ class QwenVLCore:
                     from peft import PeftModel
                     
                     logger.info(f"Loading LoRA adapter from {self.lora_path}...")
+                    print(f"   🔧 Loading LoRA adapter from {self.lora_path}...")
                     self._model = PeftModel.from_pretrained(
                         self._model,
                         self.lora_path,
                     )
                     logger.info("LoRA adapter applied successfully")
+                    print(f"   ✅ LoRA adapter applied successfully")
                 except ImportError:
                     logger.warning("PEFT not installed. LoRA adapter not applied.")
                     logger.warning("Install with: pip install peft")
