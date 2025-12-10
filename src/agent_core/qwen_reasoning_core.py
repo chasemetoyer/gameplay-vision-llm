@@ -9,12 +9,10 @@ Key capabilities:
 2. Dynamic resolution visual input processing
 3. Full perception-reasoning loop orchestration
 
-References:
-- [A: 17] Intermediate representation consumption
-- [A: 18] Segmentation + retrieval strategy
-- [A: 34] Context window management
-- [B: 67] Naive Dynamic Resolution
-- [B: 82] Perception-Reasoning Loop
+Architecture highlights:
+- Hybrid retrieval (time + semantic) for context selection
+- Dynamic resolution visual input processing
+- Perception-Reasoning Loop for continuous video analysis
 """
 
 from __future__ import annotations

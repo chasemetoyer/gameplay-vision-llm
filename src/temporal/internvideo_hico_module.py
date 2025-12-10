@@ -9,11 +9,10 @@ processing of videos spanning minutes to hours by:
 3. Compressing to clip-level tokens
 4. Further compressing to video-level representations
 
-References:
-- [B: 61, B: 44] InternVideo2.5 architecture
-- [B: 63, B: 64] HiCo mechanism for temporal compression
-- [A: 31] Two-stage compression for rolling context
-- [B: 83] Rolling compressed context for agent reasoning
+Key components:
+- FrameEncoder: Extracts dense features from video frames
+- HierarchicalCompressor: Two-stage compression (Frame->Clip->Video)
+- InternVideoHiCoModule: Main interface for video processing
 """
 
 from __future__ import annotations

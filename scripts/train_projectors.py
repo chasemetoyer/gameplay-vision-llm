@@ -20,10 +20,10 @@ Usage:
         --output outputs/projector_weights.pt \
         --epochs 10
 
-References:
-- [A: 20] Projector training for multimodal alignment
-- [C: 223] Dimension specifications
-- [C: 230-235] ProjectorBank architecture
+Key design decisions:
+- Generative training (not contrastive) for better LLM integration
+- Norm-based alignment objective for stability
+- Modular projector architecture for easy extension
 """
 
 import argparse

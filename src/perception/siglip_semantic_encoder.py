@@ -9,11 +9,10 @@ Key capabilities:
 3. Region Encoder Network (REN) style output for LLM
 4. Batch processing for multiple masked regions
 
-References:
-- [B: 55] SigLIP 2 architecture
-- [B: 57, B: 58] NaFlex variant for geometric preservation
-- [A: 12] Semantic embedding for masked regions
-- [B: 77] Region Encoder Network integration
+Key features:
+- SigLIP 2 with NaFlex for native aspect ratio preservation
+- Dense semantic feature extraction for masked regions
+- Region Encoder Network style output for LLM integration
 """
 
 from __future__ import annotations

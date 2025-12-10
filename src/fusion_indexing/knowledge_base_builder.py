@@ -7,11 +7,7 @@ data and associated events. Key capabilities:
 2. Relationship encoding (attacks, collisions, interactions)
 3. State change tracking over time
 4. Graph/table export for LLM prompting
-
-References:
-- [A: 16] Entity-centric knowledge base
-- [A: 25, A: 22] Explicit relationships for causal reasoning
-- [A: 29] Structured input for LLM
+5. JSON export with frozen schema (see schema.py)
 """
 
 from __future__ import annotations
@@ -19,7 +15,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
+import json
 
 if TYPE_CHECKING:
     pass
@@ -891,6 +889,181 @@ class KnowledgeBaseBuilder:
         self._relationships_by_source.clear()
         self._relationships_by_target.clear()
         logger.info("Knowledge base cleared")
+
+    def export_to_json(
+        self,
+        path: Optional[str | Path] = None,
+        video_source: Optional[str] = None,
+        video_duration: Optional[float] = None,
+    ) -> dict:
+        """
+        Export knowledge base to JSON format using frozen schema.
+
+        Args:
+            path: Optional file path to save JSON. If None, returns dict only.
+            video_source: Source video path/URL for metadata
+            video_duration: Video duration in seconds for metadata
+
+        Returns:
+            Dictionary representation of the knowledge base
+        """
+        from datetime import datetime
+
+        # Build entities list
+        entities_export = []
+        for entity in self._entities.values():
+            if not self.config.include_inactive_entities and not entity.is_active:
+                continue
+
+            state_history = []
+            for state in entity.state_history:
+                state_dict = {
+                    "timestamp": state.timestamp,
+                    "visible": state.visible,
+                    "attributes": state.attributes,
+                }
+                if state.position:
+                    state_dict["position"] = {
+                        "x": state.position[0],
+                        "y": state.position[1],
+                    }
+                if state.bbox:
+                    state_dict["bbox"] = {
+                        "x1": state.bbox[0],
+                        "y1": state.bbox[1],
+                        "x2": state.bbox[2],
+                        "y2": state.bbox[3],
+                    }
+                state_history.append(state_dict)
+
+            entities_export.append({
+                "entity_id": entity.entity_id,
+                "concept_label": entity.concept_label,
+                "category": entity.category.value,
+                "first_seen": entity.first_seen,
+                "last_seen": entity.last_seen,
+                "is_active": entity.is_active,
+                "duration": entity.last_seen - entity.first_seen,
+                "state_count": len(entity.state_history),
+                "state_history": state_history,
+                "attributes": entity.attributes,
+            })
+
+        # Build relationships list
+        relationships_export = []
+        for edge in self._relationships:
+            rel_dict = {
+                "source_id": edge.source_id,
+                "target_id": edge.target_id,
+                "relation_type": edge.relation_type.value,
+                "start_time": edge.start_time,
+                "confidence": edge.confidence,
+                "is_active": edge.is_active,
+                "metadata": edge.metadata,
+            }
+            if edge.end_time is not None:
+                rel_dict["end_time"] = edge.end_time
+                rel_dict["duration"] = edge.end_time - edge.start_time
+            relationships_export.append(rel_dict)
+
+        # Build full export
+        export = {
+            "schema_version": "1.0.0",
+            "export_timestamp": datetime.utcnow().isoformat() + "Z",
+            "video_source": video_source,
+            "video_duration": video_duration,
+            "entity_count": len(entities_export),
+            "relationship_count": len(relationships_export),
+            "entities": entities_export,
+            "relationships": relationships_export,
+            "statistics": self.get_statistics(),
+        }
+
+        # Save to file if path provided
+        if path:
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(export, f, indent=2)
+            logger.info(f"Knowledge base exported to {path}")
+
+        return export
+
+    @classmethod
+    def load_from_json(cls, path: str | Path) -> "KnowledgeBaseBuilder":
+        """
+        Load knowledge base from JSON export.
+
+        Args:
+            path: Path to JSON file
+
+        Returns:
+            Reconstructed KnowledgeBaseBuilder instance
+        """
+        path = Path(path)
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        # Check schema version
+        schema_version = data.get("schema_version", "unknown")
+        if schema_version != "1.0.0":
+            logger.warning(f"Schema version mismatch: {schema_version} != 1.0.0")
+
+        kb = cls()
+
+        # Reconstruct entities
+        for entity_data in data.get("entities", []):
+            category = EntityCategory(entity_data.get("category", "unknown"))
+            entity = kb.register_entity(
+                entity_id=entity_data["entity_id"],
+                concept_label=entity_data["concept_label"],
+                category=category,
+                timestamp=entity_data["first_seen"],
+                attributes=entity_data.get("attributes", {}),
+            )
+            entity.last_seen = entity_data["last_seen"]
+            entity.is_active = entity_data.get("is_active", True)
+
+            # Reconstruct state history
+            for state_data in entity_data.get("state_history", []):
+                position = None
+                bbox = None
+                if "position" in state_data:
+                    position = (
+                        state_data["position"]["x"],
+                        state_data["position"]["y"],
+                    )
+                if "bbox" in state_data:
+                    bbox = (
+                        state_data["bbox"]["x1"],
+                        state_data["bbox"]["y1"],
+                        state_data["bbox"]["x2"],
+                        state_data["bbox"]["y2"],
+                    )
+                state = EntityState(
+                    timestamp=state_data["timestamp"],
+                    position=position,
+                    bbox=bbox,
+                    visible=state_data.get("visible", True),
+                    attributes=state_data.get("attributes", {}),
+                )
+                entity.state_history.append(state)
+
+        # Reconstruct relationships
+        for rel_data in data.get("relationships", []):
+            rel_type = RelationType(rel_data["relation_type"])
+            kb.add_relationship(
+                source_id=rel_data["source_id"],
+                target_id=rel_data["target_id"],
+                relation_type=rel_type,
+                timestamp=rel_data["start_time"],
+                end_time=rel_data.get("end_time"),
+                confidence=rel_data.get("confidence", 1.0),
+                metadata=rel_data.get("metadata", {}),
+            )
+
+        logger.info(f"Knowledge base loaded from {path}")
+        return kb
 
 
 def create_knowledge_base(

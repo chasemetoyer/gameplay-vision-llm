@@ -5,9 +5,9 @@ This module implements dual-mode audio analysis using Qwen2-Audio-Instruct:
 1. Automatic Speech Recognition (ASR) for speech transcription
 2. Non-speech audio analysis for event detection (music, effects, ambient)
 
-References:
-- [B: 69, B: 70] Qwen2-Audio dual-mode operation
-- [A: 32] Timestamp marking for timeline integration
+Features:
+- Qwen2-Audio dual-mode (ASR + event detection)
+- Timestamp marking for timeline integration
 """
 
 from __future__ import annotations

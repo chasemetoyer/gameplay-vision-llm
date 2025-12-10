@@ -8,11 +8,10 @@ Model 3 (SAM 3) with Promptable Concept Segmentation (PCS). Key capabilities:
 3. Shared Perception Encoder for optimized inference
 4. Spatiotemporal mask generation with entity identity
 
-References:
-- [B: 47, A: 11] SAM 3 architecture and tracking
-- [B: 48] Promptable Concept Segmentation
-- [B: 49] Shared Perception Encoder optimization
-- [A: 54] Long-term entity tracking
+Key features:
+- SAM 3 architecture with Promptable Concept Segmentation (PCS)
+- Shared Perception Encoder for optimized inference
+- Long-term entity tracking with persistent IDs
 """
 
 from __future__ import annotations

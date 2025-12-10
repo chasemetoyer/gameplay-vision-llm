@@ -8,10 +8,10 @@ timeline to create external memory for the LLM. Key capabilities:
 3. Retrieval-ready format for context selection
 4. Deduplication and event merging
 
-References:
-- [A: 33] Timeline alignment and structured representation
-- [A: 7] Time-tagged event format
-- [A: 18, A: 34] Retrieval strategy for context limits
+Design principles:
+- Unified timeline for all modality outputs
+- Time-tagged event format for precise retrieval
+- Efficient context selection for LLM prompting
 """
 
 from __future__ import annotations

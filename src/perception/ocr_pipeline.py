@@ -8,9 +8,9 @@ PP-OCRv4 engine. Key capabilities:
 3. Bounding box detection with confidence scores
 4. Caching to avoid redundant extractions
 
-References:
-- [B: 74, B: 72] PP-OCRv4 for video OCR
-- [A: 32] Timestamp marking for timeline integration
+Key capabilities:
+- PP-OCRv4 engine for fast video OCR
+- Timestamp marking for timeline integration
 """
 
 from __future__ import annotations
