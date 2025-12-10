@@ -1086,7 +1086,7 @@ def main():
     # Handle --list-presets
     if args.list_presets:
         try:
-            from src.config.presets import print_preset_summary
+            from config.presets import print_preset_summary
             print_preset_summary()
         except ImportError:
             print("Error: Could not import preset module")
@@ -1104,7 +1104,7 @@ def main():
     preset_config = None
     if args.preset:
         try:
-            from src.config.presets import load_preset
+            from config.presets import load_preset
             preset_config = load_preset(args.preset)
             logger.info(f"Using preset '{args.preset}' (~{preset_config.estimated_vram_gb:.0f}GB VRAM)")
 
