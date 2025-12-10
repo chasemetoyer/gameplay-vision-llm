@@ -236,7 +236,6 @@ def test_timeline_indexer(result: SmokeTestResult) -> None:
     try:
         from src.fusion_indexing.timeline_indexer import (
             TimelineIndexer,
-            TimelineEvent,
             ModalityType,
             EventPriority,
         )
@@ -244,37 +243,32 @@ def test_timeline_indexer(result: SmokeTestResult) -> None:
         # Create timeline
         timeline = TimelineIndexer()
 
-        # Add events
-        events = [
-            TimelineEvent(
-                timestamp=0.0,
-                modality=ModalityType.VISUAL,
-                description="Player enters scene",
-                priority=EventPriority.MEDIUM,
-            ),
-            TimelineEvent(
-                timestamp=5.0,
-                modality=ModalityType.AUDIO,
-                description="Combat music starts",
-                priority=EventPriority.LOW,
-            ),
-            TimelineEvent(
-                timestamp=10.0,
-                modality=ModalityType.VISUAL,
-                description="Boss spawns",
-                priority=EventPriority.CRITICAL,
-                entity_id="boss_001",
-            ),
-            TimelineEvent(
-                timestamp=15.0,
-                modality=ModalityType.OCR,
-                description="HP: 100/100",
-                priority=EventPriority.LOW,
-            ),
-        ]
-
-        for event in events:
-            timeline.add_event(event)
+        # Add events using the correct method signature
+        timeline.add_event(
+            timestamp=0.0,
+            modality=ModalityType.VISUAL,
+            description="Player enters scene",
+            priority=EventPriority.MEDIUM,
+        )
+        timeline.add_event(
+            timestamp=5.0,
+            modality=ModalityType.AUDIO,
+            description="Combat music starts",
+            priority=EventPriority.LOW,
+        )
+        timeline.add_event(
+            timestamp=10.0,
+            modality=ModalityType.VISUAL,
+            description="Boss spawns",
+            priority=EventPriority.CRITICAL,
+            entity_id="boss_001",
+        )
+        timeline.add_event(
+            timestamp=15.0,
+            modality=ModalityType.OCR,
+            description="HP: 100/100",
+            priority=EventPriority.LOW,
+        )
 
         # Query by time range
         range_events = timeline.query_range(0.0, 10.0)
@@ -415,7 +409,6 @@ def test_integration(result: SmokeTestResult) -> None:
         )
         from src.fusion_indexing.timeline_indexer import (
             TimelineIndexer,
-            TimelineEvent,
             ModalityType,
             EventPriority,
         )
@@ -445,15 +438,13 @@ def test_integration(result: SmokeTestResult) -> None:
                     position=(300.0 + t * 10, 200.0),
                 )
 
-            # Add timeline event
+            # Add timeline event using correct method signature
             timeline.add_event(
-                TimelineEvent(
-                    timestamp=t,
-                    modality=ModalityType.VISUAL,
-                    description=f"Dragon at position {300 + t*10}",
-                    priority=EventPriority.HIGH,
-                    entity_id="dragon_boss",
-                )
+                timestamp=t,
+                modality=ModalityType.VISUAL,
+                description=f"Dragon at position {300 + t*10}",
+                priority=EventPriority.HIGH,
+                entity_id="dragon_boss",
             )
 
         # Verify synchronization

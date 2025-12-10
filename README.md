@@ -129,6 +129,41 @@ The `setup_env.sh` script:
 
 ### Run Inference
 
+#### Using Configuration Presets (Recommended)
+
+The system provides three hardware-aware presets that automatically configure components based on available VRAM:
+
+| Preset | VRAM | Target Hardware | Features |
+|--------|------|-----------------|----------|
+| `light` | ~20GB | RTX 3090/4090, A5000 | SigLIP + Whisper + OCR (no SAM3) |
+| `standard` | ~28GB | A100 40GB, A6000 | Full stack with SAM3 + HiCo |
+| `full` | ~45GB | A100 80GB, H100 | All encoders, extended context |
+
+```bash
+# List available presets
+python scripts/realtime_inference.py --list-presets
+
+# Use light preset (24GB GPU)
+python scripts/realtime_inference.py \
+    --video "/path/to/your/gameplay.mp4" \
+    --preset light \
+    --interactive
+
+# Use standard preset (40GB GPU)
+python scripts/realtime_inference.py \
+    --video "/path/to/your/gameplay.mp4" \
+    --preset standard \
+    --interactive
+
+# Use full preset (80GB GPU)
+python scripts/realtime_inference.py \
+    --video "/path/to/your/gameplay.mp4" \
+    --preset full \
+    --interactive
+```
+
+#### Manual Configuration
+
 ```bash
 # With a local video (full processing with SAM detection)
 python scripts/realtime_inference.py \

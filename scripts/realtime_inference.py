@@ -1055,13 +1055,17 @@ def interactive_mode(loop):
 
 def main():
     parser = argparse.ArgumentParser(description="Real-time gameplay video inference")
-    parser.add_argument("--video", required=True, help="YouTube URL or path to video file")
+    parser.add_argument("--video", help="YouTube URL or path to video file")
     parser.add_argument("--query", help="Single question to ask")
     parser.add_argument("--interactive", action="store_true", help="Interactive Q&A mode")
     parser.add_argument("--timestamp", type=str, help="Timestamp to focus on (MM:SS format)")
-    parser.add_argument("--fps", type=float, default=0.5, help="Frames per second to sample")
+    parser.add_argument("--preset", type=str, choices=["light", "standard", "full"],
+                        help="Configuration preset (light: ~20GB VRAM, standard: ~28GB, full: ~45GB)")
+    parser.add_argument("--list-presets", action="store_true",
+                        help="Show available presets and exit")
+    parser.add_argument("--fps", type=float, default=None, help="Frames per second to sample (default: from preset or 0.5)")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")
-    parser.add_argument("--use-sam", action="store_true", help="Use SAM3 for entity detection")
+    parser.add_argument("--use-sam", action="store_true", help="Use SAM3 for entity detection (overrides preset)")
     parser.add_argument("--projector-weights", default="outputs/projector_weights.pt",
                         help="Path to projector weights")
     parser.add_argument("--lora-path", default="outputs/lora_adapter",
@@ -1078,6 +1082,43 @@ def main():
                         help="Disable web search capability")
 
     args = parser.parse_args()
+
+    # Handle --list-presets
+    if args.list_presets:
+        try:
+            from src.config.presets import print_preset_summary
+            print_preset_summary()
+        except ImportError:
+            print("Error: Could not import preset module")
+            print("\nAvailable presets:")
+            print("  light    - ~20GB VRAM (RTX 3090/4090)")
+            print("  standard - ~28GB VRAM (A100 40GB)")
+            print("  full     - ~45GB VRAM (A100 80GB/H100)")
+        sys.exit(0)
+
+    # Require --video if not using --list-presets
+    if not args.video:
+        parser.error("--video is required (or use --list-presets)")
+
+    # Apply preset configuration if specified
+    preset_config = None
+    if args.preset:
+        try:
+            from src.config.presets import load_preset
+            preset_config = load_preset(args.preset)
+            logger.info(f"Using preset '{args.preset}' (~{preset_config.estimated_vram_gb:.0f}GB VRAM)")
+
+            # Apply preset defaults if not overridden by CLI
+            if args.fps is None:
+                args.fps = preset_config.inference.fps
+            if not args.use_sam:  # Only override if --use-sam not explicitly set
+                args.use_sam = preset_config.perception.use_sam
+        except ImportError as e:
+            logger.warning(f"Could not load preset config: {e}")
+
+    # Set default fps if still not set
+    if args.fps is None:
+        args.fps = 0.5
 
     # Determine video source
     video_path = args.video
