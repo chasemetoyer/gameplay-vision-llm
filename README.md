@@ -414,7 +414,86 @@ Results are saved to `results/` with comparison tables.
 
 ## Configuration Presets
 
-Hardware-aware presets automatically configure the perception stack:
+Hardware-aware presets automatically configure the entire perception stack for your GPU. Use `--preset` to select one:
+
+```bash
+# List all presets with details
+python scripts/realtime_inference.py --list-presets
+
+# Run with a specific preset
+python scripts/realtime_inference.py --video gameplay.mp4 --preset light --interactive
+```
+
+### Preset Comparison
+
+| Feature | 🪶 **LIGHT** | ⚖️ **STANDARD** | 🚀 **FULL** |
+|---------|-------------|-----------------|-------------|
+| **VRAM Required** | ~20 GB | ~28 GB | ~45 GB |
+| **Target GPUs** | RTX 3090/4090, A5000 | A100 40GB, A6000 | A100 80GB, H100 |
+| **SAM3 Detection** | ❌ Disabled | ✅ Enabled | ✅ Enabled |
+| **SigLIP Encoding** | ✅ Enabled | ✅ Enabled | ✅ Enabled |
+| **VideoMAE Temporal** | ❌ Disabled | ✅ Enabled | ✅ Enabled |
+| **Wav2Vec2 Audio** | ❌ Disabled | ✅ Enabled | ✅ Enabled |
+| **HiCo Compression** | ❌ Disabled | ✅ Enabled | ✅ Extended |
+| **OCR Backend** | Tesseract | PaddleOCR | PaddleOCR |
+| **Whisper Model** | whisper-small | whisper-base | whisper-large-v3 |
+| **Context Window** | 2 min | 5 min | 10 min |
+| **Frame Sampling** | 0.5 FPS | 1.0 FPS | 2.0 FPS |
+
+### When to Use Each Preset
+
+<details>
+<summary><b>🪶 LIGHT - Consumer GPUs (RTX 3090/4090)</b></summary>
+
+Best for:
+- Quick prototyping and testing
+- Consumer hardware with 24GB VRAM
+- Shorter videos where temporal context isn't critical
+- Lower latency requirements
+
+Trade-offs:
+- No entity detection (SAM3 disabled)
+- No temporal video features (VideoMAE disabled)
+- Basic OCR with Tesseract (less accurate for stylized game fonts)
+- Relies on Whisper for all audio understanding
+
+</details>
+
+<details>
+<summary><b>⚖️ STANDARD - Professional GPUs (A100 40GB)</b></summary>
+
+Best for:
+- Research and development
+- Full feature exploration
+- Balanced accuracy vs. speed
+- Most gameplay analysis tasks
+
+Features:
+- Full perception stack (SAM3 + SigLIP + VideoMAE)
+- HiCo temporal compression
+- High-quality PaddleOCR for game text
+- 5-minute rolling context window
+
+</details>
+
+<details>
+<summary><b>🚀 FULL - Data Center GPUs (A100 80GB, H100)</b></summary>
+
+Best for:
+- Maximum accuracy benchmarks
+- Long-form video analysis (1+ hours)
+- Production deployments
+- Research papers requiring best results
+
+Features:
+- All encoders at maximum quality
+- Whisper large-v3 for best transcription
+- 10-minute context window
+- 2x frame sampling for smoother temporal coverage
+
+</details>
+
+### Programmatic Usage
 
 ```python
 from src.config.presets import load_preset, print_preset_summary
@@ -422,16 +501,13 @@ from src.config.presets import load_preset, print_preset_summary
 # View all presets
 print_preset_summary()
 
-# Load a preset
+# Load and inspect a preset
 config = load_preset("light")
-print(f"Estimated VRAM: {config.estimated_vram_gb}GB")
+print(f"VRAM: {config.estimated_vram_gb}GB")
+print(f"VideoMAE: {config.perception.use_videomae}")
+print(f"OCR Backend: {config.perception.ocr_backend}")
+print(f"Whisper: {config.audio.whisper_model}")
 ```
-
-| Preset | VRAM | SAM3 | VideoMAE | HiCo | OCR Backend |
-|--------|------|------|----------|------|-------------|
-| `light` | ~20GB | ❌ | ❌ | ❌ | Tesseract |
-| `standard` | ~28GB | ✅ | ✅ | ✅ | PaddleOCR |
-| `full` | ~45GB | ✅ | ✅ | ✅ (extended) | PaddleOCR |
 
 ---
 
