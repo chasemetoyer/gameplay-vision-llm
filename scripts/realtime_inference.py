@@ -647,11 +647,16 @@ def process_video(
 
     Supports feature caching to avoid reprocessing the same video.
     """
+    import time
     from agent_core.qwen_reasoning_core import (
         PerceptionReasoningLoop,
         ReasoningCoreConfig,
         FeatureCache,
     )
+
+    # Timing dictionary to track each stage
+    timings = {}
+    total_start = time.time()
 
     logger.info("=" * 60)
     logger.info("PROCESSING VIDEO")
@@ -662,12 +667,16 @@ def process_video(
 
     # Check if we have cached features
     cached_features = None
+    from_cache = False
     if feature_cache and feature_cache.has_features(video_path):
         print("\nFound cached features! Loading from cache...")
+        cache_start = time.time()
         cached_features = feature_cache.load_features(video_path)
+        timings["cache_load"] = time.time() - cache_start
 
     if cached_features:
         # Use cached features
+        from_cache = True
         frames = cached_features.get("frames", [])
         sam_results = cached_features.get("sam_results")
         siglip_embs = cached_features.get("siglip", [])
@@ -682,30 +691,58 @@ def process_video(
         # Extract features from scratch
         # 1. Extract frames
         logger.info("\n1. Extracting frames...")
+        t0 = time.time()
         frames = extract_frames(video_path, fps=fps)
+        timings["frame_extraction"] = time.time() - t0
+        print(f"   ⏱️  Frame extraction: {timings['frame_extraction']:.1f}s")
 
         # 2. Run SAM3 detection (if enabled)
         sam_results = None
         if use_sam:
             logger.info("\n2a. Running SAM3 visual detection...")
+            t0 = time.time()
             sam_results = run_sam3_detection(frames, device)
+            timings["sam3"] = time.time() - t0
+            print(f"   ⏱️  SAM3 detection: {timings['sam3']:.1f}s")
+        else:
+            timings["sam3"] = 0.0
+            print("   ⏱️  SAM3: Skipped (disabled)")
 
         # 3. Extract embeddings
         logger.info("\n2b. Extracting multimodal embeddings...")
+        
+        t0 = time.time()
         siglip_embs = extract_siglip_embeddings(frames, sam_results=sam_results, device=device)
+        timings["siglip"] = time.time() - t0
+        print(f"   ⏱️  SigLIP encoding: {timings['siglip']:.1f}s")
+        
+        t0 = time.time()
         videomae_embs = extract_videomae_embeddings(frames, device)
+        timings["videomae"] = time.time() - t0
+        print(f"   ⏱️  VideoMAE encoding: {timings['videomae']:.1f}s")
+        
+        t0 = time.time()
         wav2vec_embs = extract_wav2vec_embeddings(video_path, device)
+        timings["wav2vec"] = time.time() - t0
+        print(f"   ⏱️  Wav2Vec2 encoding: {timings['wav2vec']:.1f}s")
 
         # 4. Run OCR extraction
         logger.info("\n3. Extracting text (OCR)...")
+        t0 = time.time()
         ocr_results = run_ocr_extraction(frames, device)
+        timings["ocr"] = time.time() - t0
+        print(f"   ⏱️  OCR extraction: {timings['ocr']:.1f}s")
 
         # 5. Run speech transcription
         logger.info("\n4. Transcribing speech (Whisper)...")
+        t0 = time.time()
         speech_results = run_speech_transcription(video_path, device)
+        timings["whisper"] = time.time() - t0
+        print(f"   ⏱️  Whisper transcription: {timings['whisper']:.1f}s")
 
         # Cache features for future use (excluding full frames to save space)
         if feature_cache:
+            t0 = time.time()
             # Store frame timestamps and thumbnails instead of full frames
             frame_metadata = [(ts, f.size) for ts, f in frames]
             cache_data = {
@@ -719,14 +756,19 @@ def process_video(
                 "speech_results": speech_results,
             }
             feature_cache.save_features(video_path, cache_data)
+            timings["cache_save"] = time.time() - t0
+            print(f"   ⏱️  Cache save: {timings['cache_save']:.1f}s")
             print("Features cached for future use")
 
     # 6. Build timeline index
     logger.info("\n5. Building timeline index...")
+    t0 = time.time()
     timeline_indexer = build_timeline_index(ocr_results, speech_results, sam_results)
+    timings["timeline"] = time.time() - t0
 
     # 7. Initialize loop with projectors and timeline
     logger.info("\n6. Initializing PerceptionReasoningLoop...")
+    t0 = time.time()
     config = ReasoningCoreConfig(device=device)
 
     loop = PerceptionReasoningLoop(
@@ -738,6 +780,14 @@ def process_video(
 
     # Index the timeline for semantic retrieval
     loop.reasoning_core.index_timeline(timeline_indexer)
+    timings["model_init"] = time.time() - t0
+
+    # Eagerly load Qwen3-VL model so it's ready for inference
+    logger.info("\n7. Loading Qwen3-VL reasoning model...")
+    t0 = time.time()
+    loop.reasoning_core._load_model()  # Force eager loading
+    timings["qwen_load"] = time.time() - t0
+    print(f"   ⏱️  Qwen3-VL load: {timings['qwen_load']:.1f}s")
 
     # Store embeddings and detections for later use
     loop._cached_embeddings = {
@@ -750,6 +800,10 @@ def process_video(
         "speech_results": speech_results,
         "timeline_indexer": timeline_indexer,
     }
+
+    # Calculate total time
+    total_time = time.time() - total_start
+    timings["total"] = total_time
 
     # Print summary with explicit print (not logger)
     print("\n" + "=" * 60)
@@ -768,7 +822,38 @@ def process_video(
     if feature_cache:
         stats = feature_cache.get_cache_stats()
         print(f"   Cache: {stats['num_cached_videos']} videos, {stats['total_size_mb']:.1f} MB")
+    
+    # Print timing summary
+    print()
+    print("-" * 60)
+    print("⏱️  TIMING BREAKDOWN")
+    print("-" * 60)
+    
+    if from_cache:
+        print(f"   {'Cache load:':<25} {timings.get('cache_load', 0):.1f}s")
+    else:
+        print(f"   {'Frame extraction:':<25} {timings.get('frame_extraction', 0):.1f}s")
+        if use_sam:
+            print(f"   {'SAM3 detection:':<25} {timings.get('sam3', 0):.1f}s")
+        else:
+            print(f"   {'SAM3 detection:':<25} (skipped)")
+        print(f"   {'SigLIP encoding:':<25} {timings.get('siglip', 0):.1f}s")
+        print(f"   {'VideoMAE encoding:':<25} {timings.get('videomae', 0):.1f}s")
+        print(f"   {'Wav2Vec2 encoding:':<25} {timings.get('wav2vec', 0):.1f}s")
+        print(f"   {'OCR extraction:':<25} {timings.get('ocr', 0):.1f}s")
+        print(f"   {'Whisper transcription:':<25} {timings.get('whisper', 0):.1f}s")
+        if 'cache_save' in timings:
+            print(f"   {'Cache save:':<25} {timings.get('cache_save', 0):.1f}s")
+    
+    print(f"   {'Timeline building:':<25} {timings.get('timeline', 0):.1f}s")
+    print(f"   {'Model initialization:':<25} {timings.get('model_init', 0):.1f}s")
+    print(f"   {'Qwen3-VL load:':<25} {timings.get('qwen_load', 0):.1f}s")
+    print("-" * 60)
+    print(f"   {'TOTAL TIME:':<25} {total_time:.1f}s ({total_time/60:.1f} min)")
     print("=" * 60)
+
+    # Store timings in loop for later access
+    loop._processing_timings = timings
 
     return loop
 
