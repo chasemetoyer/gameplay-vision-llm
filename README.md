@@ -1,7 +1,13 @@
 # Multimodal Gameplay Video Understanding with Vision-Language Models
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![CUDA 12.8+](https://img.shields.io/badge/CUDA-12.8+-green.svg)](https://developer.nvidia.com/cuda-downloads)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97-Models-orange)](https://huggingface.co/cjm249/gameplay-vision-llm-adapters)
+
 A research framework for multimodal video understanding and question-answering on gameplay footage, combining state-of-the-art vision encoders, audio processing, and large language models with trained projection adapters.
-- Article I wrote on it as well: https://medium.com/@cmetoyerbusiness/towards-a-cascaded-multimodal-pipeline-for-long-horizon-gameplay-analysis-25ed6a8630c9
+
+📝 **[Read the Article on Medium](https://medium.com/@cmetoyerbusiness/towards-a-cascaded-multimodal-pipeline-for-long-horizon-gameplay-analysis-25ed6a8630c9)**
 
 ## Trained Weights
 
@@ -44,6 +50,42 @@ The system can autonomously search the web for game-related information when nee
 ### Feature Caching
 - Extracted features are cached to avoid reprocessing
 - Subsequent runs load in ~30 seconds instead of ~15 minutes
+
+### Example Q&A Output
+
+```
+You: @02:45 What just happened to the player?
+
+🎮 Gameplay Vision LLM [Confidence: 87%]
+
+At timestamp 02:45, the player was hit by the boss's fire breath attack.
+
+Timeline of events:
+• [02:42] Boss "Flame Dragon" entered rage phase (HP below 30%)
+• [02:43] Boss began charging fire breath (detected via audio: roar sound)
+• [02:44] Player attempted to dodge roll (movement detected)
+• [02:45] Fire breath connected - player HP dropped from 850 to 340
+• [02:46] Player used Estus Flask (HP restored to 720)
+
+The player survived due to high Vigor stat and quick healing response.
+
+---
+You: Why did the dodge fail?
+
+🎮 Gameplay Vision LLM [Confidence: 72%]
+
+Based on the timeline analysis, the dodge likely failed because:
+
+1. **Timing**: The roll started at 02:44.2s but fire breath hit at 02:44.8s - 
+   the ~0.6s i-frame window had already ended
+2. **Direction**: Player rolled sideways, but this boss's fire breath has 
+   a wide 120° arc requiring backward rolls
+3. **Stamina**: OCR detected stamina bar at ~15% before the roll, 
+   suggesting a partial/slow roll animation
+
+Recommended strategy: Wait for the audio cue (roar), then roll backward 
+twice with full stamina.
+```
 
 ---
 
@@ -590,6 +632,77 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 - **Tool calling is model-dependent:** The 8B model may not always choose to search when it could. Larger models may be more consistent.
 - **transformers version:** Requires `transformers>=5.0.0.dev0` for SAM3 support
 
+## Troubleshooting
+
+### Common Issues
+
+<details>
+<summary><b>SAM3 Import Error: "No module named 'transformers.models.sam3'"</b></summary>
+
+SAM3 requires the development version of transformers (5.0.0+):
+
+```bash
+pip install git+https://github.com/huggingface/transformers.git
+```
+
+</details>
+
+<details>
+<summary><b>CUDA Out of Memory (OOM) Error</b></summary>
+
+Use a lighter preset that fits your VRAM:
+
+```bash
+# For 24GB GPUs (RTX 3090/4090)
+python scripts/realtime_inference.py --video video.mp4 --preset light
+
+# Or disable SAM3 manually
+python scripts/realtime_inference.py --video video.mp4  # no --use-sam flag
+```
+
+</details>
+
+<details>
+<summary><b>PaddleOCR/PaddlePaddle Conflicts</b></summary>
+
+PaddlePaddle has specific CUDA version requirements. If you see conflicts:
+
+```bash
+# Reinstall PaddlePaddle for your CUDA version
+pip uninstall paddlepaddle-gpu
+python3 -m pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+
+# Or use Tesseract OCR instead (lighter preset)
+python scripts/realtime_inference.py --preset light  # Uses Tesseract
+```
+
+</details>
+
+<details>
+<summary><b>Flash Attention Installation Failed</b></summary>
+
+Use the pre-built wheel instead of building from source:
+
+```bash
+pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+```
+
+</details>
+
+<details>
+<summary><b>Smoke Test Fails</b></summary>
+
+Run the smoke test to diagnose issues:
+
+```bash
+python scripts/smoke_test.py -v  # Verbose mode
+
+# Expected: 7/7 tests pass
+# If temporal module fails, ensure torch is installed
+```
+
+</details>
+
 ## Future Work
 
 ### ✅ Recently Completed (gvlEval Branch)
@@ -687,6 +800,25 @@ The following items from the original roadmap have been implemented:
 5. Radford, A., et al. "Robust Speech Recognition via Large-Scale Weak Supervision." arXiv 2022.
 6. Qwen Team. "Qwen-VL: A Versatile Vision-Language Model." arXiv 2023.
 
+## Citation
+
+If you use this project in your research, please cite:
+
+```bibtex
+@software{metoyer2025gameplay,
+  author = {Metoyer, Chase},
+  title = {Gameplay Vision LLM: Multimodal Video Understanding for Gameplay Analysis},
+  year = {2025},
+  publisher = {GitHub},
+  url = {https://github.com/chasemetoyer/gameplay-vision-llm},
+  note = {A research framework for long-horizon gameplay video QA with multimodal perception}
+}
+```
+
 ## License
 
-MIT License
+MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+**Made with ❤️ for the gaming and AI research community**
