@@ -592,73 +592,91 @@ Recommended: NVIDIA A100 (40/80 GB) or H100
 
 ## Future Work
 
+### ✅ Recently Completed (gvlEval Branch)
+
+The following items from the original roadmap have been implemented:
+
+- **✅ Temporal Context Management (HiCo):** Implemented `TemporalContextManager` with 4-level hierarchical compression (FINE → CLIP → SCENE → SESSION). Provides memory-bounded rolling context for long-horizon video understanding.
+
+- **✅ Entity-Centric Knowledge Base:** The `KnowledgeBaseBuilder` now has a frozen schema (v1.0.0) with full JSON export/import, entity categories (PLAYER, ENEMY, BOSS, NPC, etc.), and relationship types (ATTACKS, DAMAGES, HEALS, COLLIDES_WITH, etc.).
+
+- **✅ Evaluation Benchmarks:** Comprehensive 3-phase evaluation system implemented:
+  - Phase 1: GlitchBench + PhysGame (short-form glitch detection)
+  - Phase 2: VideoGameQA-Bench (game-specific QA tasks)
+  - Phase 3: LongVideoBench + MLVU (long-video stress test)
+  - Includes perception caching, metrics tracking, and model comparison infrastructure
+
+- **✅ Configuration Presets:** Hardware-aware presets (`light`, `standard`, `full`) with documented VRAM requirements and automatic component configuration.
+
+---
+
 ### High Priority
 
-- **Cascaded Processing and Efficiency**
+- **Implement Trigger Detector**
+  - Enable selective/cascaded processing based on perception outputs
+  - Monitor for high-confidence events (boss detection, explosions, deaths)
+  - Only activate heavy reasoning core when significant events detected
+  - Target: Reduce average inference cost by 60-80%
 
-- **Implement Trigger Detector:** Integrate the `TriggerDetector` mechanism to enable **selective analysis** (cascaded processing). This system must monitor perception outputs (e.g., SAM3 detecting a 'boss' or Qwen2-Audio detecting an 'explosion') and only activate the high-cost reasoning core (Qwen LLM) when a significant, high-confidence event is detected.
-- **Integrate Temporal Context Management (HiCo):** Activate the `TemporalContextManager` to use **Hierarchical Token Compression (HiCo)**, ensuring the LLM receives a continuous, rolling compressed context representing the last **5–10 minutes** of video via VideoMAE embeddings. This maintains long-range causal awareness while keeping token consumption low.
-- **Entity-Centric Knowledge Base:** Fully utilize the `KnowledgeBaseBuilder` to ingest structured facts (entity IDs, state changes, bounding boxes) extracted by SAM3, transforming raw detections into explicit causal linkages for the LLM to reason over.
-
-- **SigLIP Inference Speed**
-  - Batch encode multiple regions simultaneously
-  - Use FP16/INT8 quantization for faster inference
-  - Implement async encoding with prefetching
-  - Explore SigLIP-Base for speed vs accuracy tradeoff
-
-- **Multi-GPU Parallelization**
-  - Pipeline parallelism: run SAM3, SigLIP, OCR, etc. on separate GPUs
-  - Data parallelism: split frames across GPUs for same model
-  - Async frame queues between pipeline stages
-  - Target 3-5x speedup with 4 GPUs
+- **Run Benchmark Evaluation**
+  - Execute Phase 1-3 benchmarks with real data
+  - Compare `baseline_plain` vs `gvp_light` vs `gvp_full` configurations
+  - Publish accuracy + efficiency metrics
+  - Ablation studies: KB vs no-KB, timeline vs naive long-context
 
 - **Causal Link Extraction**
   - Explicit action→effect pairing from timeline events
-  - Game state tracking (HP, mana, cooldowns)
+  - Game state tracking (HP, mana, cooldowns, buffs)
   - Rule-based causal graph construction
   - Train causal reasoning module on gameplay data
 
-- **Timeline Enrichment**
-  - Integrate game-specific entity recognition
-  - Add damage number parsing from OCR
-  - Track character positions across frames
-  - Build entity relationship graphs
+- **Multi-GPU Parallelization**
+  - Pipeline parallelism: SAM3, SigLIP, OCR on separate GPUs
+  - Data parallelism: split frames across GPUs
+  - Async frame queues between pipeline stages
+  - Target: 3-5x speedup with 4 GPUs
 
 ### Medium Priority
 
 - **Streaming Inference**
   - Real-time processing during video playback
-  - Incremental timeline updates
+  - Incremental timeline and KB updates
   - Lower-latency response generation
+  - WebSocket API for live gameplay analysis
+
+- **SigLIP Inference Optimization**
+  - Batch encode multiple regions simultaneously
+  - FP16/INT8 quantization for faster inference
+  - Async encoding with prefetching
+  - Explore SigLIP-Base for speed vs accuracy tradeoff
 
 - **Multi-Language Support**
   - Extend Whisper to detect and transcribe multiple languages
   - Add OCR support for non-Latin scripts (Japanese, Chinese, Korean)
+  - Game-specific font recognition
 
 - **Model Optimization**
   - Quantize projectors to INT8
   - Explore smaller LLM backbones (Qwen3-VL-4B)
-  - ONNX export for faster inference
-  - Investigate SAM3 BF16 compatibility for further speedup
-
-- **SAM3 Batching**
-  - Process multiple concepts per frame in a single forward pass
-  - Implement CUDA streams for overlapping data transfer with compute
-  - Increase SigLIP batch size from 16 to 32-64 regions
+  - ONNX export for edge deployment
+  - Investigate SAM3 BF16 compatibility
 
 ### Low Priority / Research
 
 - **Game-Specific Adapters**
-  - Train LoRA variants for specific game genres
-  - Add game state parsers for popular titles
+  - Train LoRA variants for specific game genres (ARPG, FPS, MOBA)
+  - Add game state parsers for popular titles (Elden Ring, League of Legends)
+  - Community-contributed game configs
 
 - **Interactive Training**
   - Human-in-the-loop feedback for improving responses
   - Active learning for edge cases
+  - User correction integration
 
-- **Evaluation Benchmarks**
-  - Create gameplay video QA benchmark
-  - Metrics for causal reasoning accuracy
+- **Timeline Enrichment**
+  - Damage number parsing from OCR
+  - Character position tracking across frames
+  - Automatic highlight detection
 
 ## References
 
