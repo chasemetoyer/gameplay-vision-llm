@@ -221,17 +221,36 @@ gameplay-vision-llm/
 │   ├── audio/                     # Audio processing
 │   │   └── qwen_audio_processor.py
 │   ├── temporal/                  # Temporal modeling
-│   │   └── internvideo_hico_module.py
-│   └── fusion_indexing/           # Timeline and retrieval
-│       ├── timeline_indexer.py
-│       └── knowledge_base_builder.py
+│   │   ├── internvideo_hico_module.py  # HiCo compression
+│   │   └── context_manager.py     # Hierarchical context management
+│   ├── fusion_indexing/           # Timeline and retrieval
+│   │   ├── timeline_indexer.py
+│   │   ├── knowledge_base_builder.py
+│   │   └── schema.py              # Frozen KB/timeline schema v1.0.0
+│   └── config/                    # Configuration management
+│       └── presets.py             # Hardware-aware presets
 │
 ├── scripts/                       # Executable scripts
 │   ├── realtime_inference.py      # Main interactive inference
 │   ├── extract_features.py        # Feature extraction pipeline
 │   ├── train_projectors.py        # Projector training
 │   ├── finetune_lora.py           # LoRA fine-tuning
+│   ├── smoke_test.py              # Quick validation (no GPU required)
 │   └── demo_projector_inference.py
+│
+├── benchmarks/                    # Evaluation infrastructure
+│   ├── loaders/                   # Benchmark data loaders
+│   │   ├── glitchbench.py         # GlitchBench (CVPR 2024)
+│   │   ├── physgame.py            # PhysGame (physics anomalies)
+│   │   ├── videogameqa.py         # VideoGameQA-Bench (NeurIPS 2025)
+│   │   └── longvideo.py           # LongVideoBench + MLVU
+│   ├── run_phase1.py              # Phase 1: GlitchBench + PhysGame
+│   ├── run_phase2.py              # Phase 2: VideoGameQA-Bench
+│   ├── run_phase3.py              # Phase 3: Long-video stress test
+│   ├── perception_cache.py        # Two-stage perception caching
+│   ├── model_configs.py           # Model configurations for comparison
+│   ├── metrics.py                 # Comprehensive metrics tracking
+│   └── eval_harness.py            # Evaluation harness
 │
 ├── outputs/                       # Model outputs
 │   ├── projector_weights.pt       # Trained projector weights
@@ -246,6 +265,191 @@ gameplay-vision-llm/
 └── tests/                         # Unit tests
 ```
 
+---
+
+## Evaluation System
+
+The project includes a comprehensive 3-phase evaluation system for benchmarking against video game QA datasets.
+
+### Quick Validation (Smoke Test)
+
+Run the smoke test to verify all modules are working:
+
+```bash
+python scripts/smoke_test.py        # Quick test (no GPU required)
+python scripts/smoke_test.py --full # Extended tests
+```
+
+Expected output:
+```
+[PASS] Configuration presets loaded
+[PASS] Knowledge base created and populated
+[PASS] JSON export and import successful
+[PASS] Timeline indexer created and populated
+[PASS] Schema module validated
+[PASS] Temporal module validated
+[PASS] KB-Timeline integration validated
+Results: 7 passed, 0 failed
+```
+
+### 3-Phase Benchmark Evaluation
+
+#### Model Configurations
+
+Three model configurations are compared across all benchmarks:
+
+| Config | Description | VRAM |
+|--------|-------------|------|
+| `baseline_plain` | Qwen3-VL with uniform sampling, no timeline/KB | ~16GB |
+| `gvp_light` | SigLIP + ASR/OCR, timeline index + basic KB | ~20GB |
+| `gvp_full` | Full stack (SAM3 + SigLIP + VideoMAE + HiCo) | ~45GB |
+
+#### Phase 1: GlitchBench + PhysGame (Cheap)
+
+Short-form game-specific evaluation:
+
+```bash
+# Run on GlitchBench with light config
+python benchmarks/run_phase1.py --benchmark glitchbench --config gvp_light
+
+# Run all configs on PhysGame
+python benchmarks/run_phase1.py --benchmark physgame --all-configs
+
+# Full Phase 1 (both benchmarks, all configs)
+python benchmarks/run_phase1.py --full --max-samples 100
+```
+
+**Benchmarks:**
+- **GlitchBench** (CVPR 2024): 593 glitches from r/GamePhysics
+- **PhysGame**: 880 physics anomaly videos, 4 domains (mechanics, kinematics, optics, materials)
+
+#### Phase 2: VideoGameQA-Bench (Mid-cost)
+
+Game-specific QA evaluation:
+
+```bash
+# Run on specific task
+python benchmarks/run_phase2.py --task needle_haystack --config gvp_light
+
+# Run all tasks
+python benchmarks/run_phase2.py --all-tasks --max-samples 50
+```
+
+**Tasks:**
+- `visual_unit_test` - Verify specific game states
+- `needle_haystack` - Find events in long videos
+- `glitch_detection` - Identify glitches in gameplay
+- `bug_report` - Generate structured bug reports
+
+#### Phase 3: Long-Video Stress Test (Optional)
+
+Tests temporal scaling on hour-class videos:
+
+```bash
+# Run on LongVideoBench
+python benchmarks/run_phase3.py --benchmark longvideobench --config gvp_full
+
+# With duration and sample limits
+python benchmarks/run_phase3.py --full --max-samples 25 --max-duration 600
+```
+
+**Benchmarks:**
+- **LongVideoBench**: 3,763 videos (up to 1 hour)
+- **MLVU**: 1,730 videos (3-120 minutes)
+
+### Metrics Tracking
+
+All evaluations track:
+- **Accuracy**: Task-specific metrics (MCQ, binary, F1)
+- **Frames**: Number of frames processed per input
+- **Tokens**: Input/output tokens per QA
+- **Time**: Perception, retrieval, generation latency
+- **VRAM**: Peak GPU memory usage
+
+Results are saved to `results/` with comparison tables.
+
+---
+
+## Configuration Presets
+
+Hardware-aware presets automatically configure the perception stack:
+
+```python
+from src.config.presets import load_preset, print_preset_summary
+
+# View all presets
+print_preset_summary()
+
+# Load a preset
+config = load_preset("light")
+print(f"Estimated VRAM: {config.estimated_vram_gb}GB")
+```
+
+| Preset | VRAM | SAM3 | VideoMAE | HiCo | OCR Backend |
+|--------|------|------|----------|------|-------------|
+| `light` | ~20GB | ❌ | ❌ | ❌ | Tesseract |
+| `standard` | ~28GB | ✅ | ✅ | ✅ | PaddleOCR |
+| `full` | ~45GB | ✅ | ✅ | ✅ (extended) | PaddleOCR |
+
+---
+
+## Temporal Context Management
+
+The `TemporalContextManager` provides hierarchical context compression for long-horizon video understanding:
+
+```python
+from src.temporal.context_manager import TemporalContextManager, ContextLevel
+
+manager = TemporalContextManager()
+
+# Add observations
+manager.add_observation(0.0, 1.0, "Player enters boss arena")
+manager.add_observation(1.0, 2.0, "Boss spawns with full health")
+manager.add_observation(2.0, 5.0, "Player attacks, deals 100 damage")
+
+# Get context for LLM (automatically compressed if too long)
+context = manager.get_context_for_llm(max_chars=4000)
+```
+
+**Hierarchy Levels:**
+| Level | Name | Duration | Description |
+|-------|------|----------|-------------|
+| 0 | FINE | 1-5 sec | Individual events |
+| 1 | CLIP | 10-30 sec | Summarized clips |
+| 2 | SCENE | 1-5 min | Scene summaries |
+| 3 | SESSION | 5+ min | Global session context |
+
+---
+
+## Knowledge Base Schema
+
+The KB schema (v1.0.0) provides stable, versioned data structures for JSON export:
+
+```python
+from src.fusion_indexing.schema import (
+    EntityCategorySchema,
+    RelationTypeSchema,
+    get_schema_documentation,
+)
+
+# View all entity categories
+print([c.value for c in EntityCategorySchema])
+# ['player', 'enemy', 'boss', 'npc', 'item', ...]
+
+# View all relationship types
+print([r.value for r in RelationTypeSchema])
+# ['attacks', 'damages', 'heals', 'collides_with', ...]
+
+# Export KB to JSON
+from src.fusion_indexing.knowledge_base_builder import KnowledgeBaseBuilder
+kb = KnowledgeBaseBuilder()
+# ... populate kb ...
+kb.export_to_json("session.json", video_source="gameplay.mp4")
+```
+
+---
+
+
 ## Usage
 
 ### Real-Time Inference
@@ -253,6 +457,30 @@ gameplay-vision-llm/
 Interactive question-answering on gameplay videos:
 
 ```bash
+# List available presets
+python scripts/realtime_inference.py --list-presets
+
+# Run with light preset (~20GB VRAM)
+python scripts/realtime_inference.py --video clip.mp4 --preset light
+
+# Run Phase 1 evaluation
+python benchmarks/run_phase1.py --benchmark glitchbench --config light --max-samples 100
+
+# Run Phase 2 evaluation
+python benchmarks/run_phase2.py --benchmark glitchbench --config light --max-samples 100
+
+# Run Phase 3 evaluation
+python benchmarks/run_phase3.py --benchmark glitchbench --config light --max-samples 100
+
+# Run all Phase 1 configs for comparison
+python benchmarks/run_phase1.py --all-configs --max-samples 50
+
+# Run all Phase 2 configs for comparison
+python benchmarks/run_phase2.py --all-configs --max-samples 50
+
+# Run all Phase 3 configs for comparison
+python benchmarks/run_phase3.py --all-configs --max-samples 50
+
 # Local video file with full processing
 python scripts/realtime_inference.py \
     --video path/to/gameplay.mp4 \
