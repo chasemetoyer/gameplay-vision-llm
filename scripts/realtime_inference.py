@@ -445,27 +445,57 @@ def extract_wav2vec_embeddings(video_path: str, device: str = "cuda"):
 # OCR Extraction
 # =============================================================================
 
-def run_ocr_extraction(frames: list[tuple[float, Image.Image]], device: str = "cuda"):
+def run_ocr_extraction(frames: list[tuple[float, Image.Image]], device: str = "cuda", backend: str = "paddleocr"):
     """
     Run OCR on frames to extract on-screen text (subtitles, UI, damage numbers).
     
-    Uses PaddleOCR in a subprocess to avoid CUDA conflicts.
+    Args:
+        frames: List of (timestamp, PIL.Image) tuples
+        device: Device to run on ("cuda" or "cpu")
+        backend: OCR backend to use ("paddleocr" or "tesseract")
     """
     import subprocess
     import json as json_module
     from pathlib import Path
     import numpy as np
     
-    logger.info("Running OCR extraction...")
+    logger.info(f"Running OCR extraction (backend={backend})...")
     
+    results = []
+    
+    if backend == "tesseract":
+        # Use Tesseract OCR (lighter, no GPU needed)
+        try:
+            import pytesseract
+            
+            for idx, (timestamp, frame) in enumerate(tqdm(frames, desc="OCR (tesseract)")):
+                try:
+                    frame_rgb = frame.convert("RGB")
+                    text = pytesseract.image_to_string(frame_rgb).strip()
+                    if text:
+                        results.append({
+                            "timestamp": timestamp,
+                            "text": text,
+                            "confidence": 0.8,  # Tesseract default
+                            "type": "ocr",
+                        })
+                except Exception as e:
+                    logger.debug(f"OCR error at {timestamp:.1f}s: {e}")
+            
+            logger.info(f"OCR (tesseract): {len(results)} text regions extracted")
+            return results
+            
+        except ImportError:
+            logger.warning("pytesseract not installed, falling back to PaddleOCR")
+            backend = "paddleocr"
+    
+    # PaddleOCR backend
     try:
-        # Try to use OCR pipeline directly first
         from perception.ocr_pipeline import OCRPipeline, OCRConfig
         
         config = OCRConfig(use_gpu=(device == "cuda"))
         ocr = OCRPipeline(config)
         
-        results = []
         for idx, (timestamp, frame) in enumerate(tqdm(frames, desc="OCR")):
             try:
                 frame_np = np.array(frame.convert("RGB"))
@@ -481,7 +511,7 @@ def run_ocr_extraction(frames: list[tuple[float, Image.Image]], device: str = "c
             except Exception as e:
                 logger.debug(f"OCR error at {timestamp:.1f}s: {e}")
         
-        logger.info(f"OCR: {len(results)} text regions extracted")
+        logger.info(f"OCR (paddleocr): {len(results)} text regions extracted")
         return results
         
     except ImportError:
@@ -492,14 +522,19 @@ def run_ocr_extraction(frames: list[tuple[float, Image.Image]], device: str = "c
         return []
 
 
-def run_speech_transcription(video_path: str, device: str = "cuda"):
+def run_speech_transcription(video_path: str, device: str = "cuda", model_size: str = "base"):
     """
     Extract speech transcription from video audio using Whisper.
+    
+    Args:
+        video_path: Path to video file
+        device: Device to run on ("cuda" or "cpu")
+        model_size: Whisper model size ("tiny", "base", "small", "medium", "large", "large-v3")
     
     Returns list of speech segments with timestamps.
     """
     print("=" * 50)
-    print("🎤 WHISPER SPEECH TRANSCRIPTION")
+    print(f"🎤 WHISPER SPEECH TRANSCRIPTION ({model_size})")
     print("=" * 50)
     
     try:
@@ -521,10 +556,10 @@ def run_speech_transcription(video_path: str, device: str = "cuda"):
             print(f"   ⚠️ FFmpeg failed: {result.stderr.decode()[:200]}")
             return []
         
-        print(f"   [2/4] Loading Whisper model (base)...")
+        print(f"   [2/4] Loading Whisper model ({model_size})...")
         
         # Load Whisper model
-        model = whisper.load_model("base", device=device)
+        model = whisper.load_model(model_size, device=device)
         
         print(f"   [3/4] Transcribing audio...")
         
@@ -641,11 +676,17 @@ def process_video(
     lora_path: str = "outputs/lora_adapter",
     use_cache: bool = True,
     cache_dir: str = "data/cache",
+    preset_config=None,  # SystemConfig from presets module
 ):
     """
     Process video and return initialized PerceptionReasoningLoop.
 
     Supports feature caching to avoid reprocessing the same video.
+    
+    Args:
+        preset_config: Optional SystemConfig from presets module. If provided,
+                      settings like use_videomae, ocr_backend, whisper_model
+                      are taken from the preset.
     """
     import time
     from agent_core.qwen_reasoning_core import (
@@ -657,6 +698,24 @@ def process_video(
     # Timing dictionary to track each stage
     timings = {}
     total_start = time.time()
+    
+    # Extract settings from preset config if provided
+    use_videomae = True
+    use_wav2vec = True
+    ocr_backend = "paddleocr"
+    whisper_model = "base"
+    
+    if preset_config is not None:
+        use_videomae = preset_config.perception.use_videomae
+        use_wav2vec = preset_config.audio.use_wav2vec
+        ocr_backend = preset_config.perception.ocr_backend
+        # Extract model name without prefix for whisper
+        whisper_full = preset_config.audio.whisper_model
+        if "/" in whisper_full:
+            whisper_model = whisper_full.split("/")[-1].replace("whisper-", "")
+        else:
+            whisper_model = whisper_full.replace("whisper-", "")
+        logger.info(f"Using preset settings: VideoMAE={use_videomae}, Wav2Vec={use_wav2vec}, OCR={ocr_backend}, Whisper={whisper_model}")
 
     logger.info("=" * 60)
     logger.info("PROCESSING VIDEO")
@@ -716,29 +775,41 @@ def process_video(
         timings["siglip"] = time.time() - t0
         print(f"   ⏱️  SigLIP encoding: {timings['siglip']:.1f}s")
         
-        t0 = time.time()
-        videomae_embs = extract_videomae_embeddings(frames, device)
-        timings["videomae"] = time.time() - t0
-        print(f"   ⏱️  VideoMAE encoding: {timings['videomae']:.1f}s")
+        # VideoMAE (conditional based on preset)
+        if use_videomae:
+            t0 = time.time()
+            videomae_embs = extract_videomae_embeddings(frames, device)
+            timings["videomae"] = time.time() - t0
+            print(f"   ⏱️  VideoMAE encoding: {timings['videomae']:.1f}s")
+        else:
+            videomae_embs = []
+            timings["videomae"] = 0.0
+            print("   ⏱️  VideoMAE: Skipped (disabled by preset)")
         
-        t0 = time.time()
-        wav2vec_embs = extract_wav2vec_embeddings(video_path, device)
-        timings["wav2vec"] = time.time() - t0
-        print(f"   ⏱️  Wav2Vec2 encoding: {timings['wav2vec']:.1f}s")
+        # Wav2Vec2 (conditional based on preset)
+        if use_wav2vec:
+            t0 = time.time()
+            wav2vec_embs = extract_wav2vec_embeddings(video_path, device)
+            timings["wav2vec"] = time.time() - t0
+            print(f"   ⏱️  Wav2Vec2 encoding: {timings['wav2vec']:.1f}s")
+        else:
+            wav2vec_embs = []
+            timings["wav2vec"] = 0.0
+            print("   ⏱️  Wav2Vec2: Skipped (disabled by preset)")
 
         # 4. Run OCR extraction
         logger.info("\n3. Extracting text (OCR)...")
         t0 = time.time()
-        ocr_results = run_ocr_extraction(frames, device)
+        ocr_results = run_ocr_extraction(frames, device, backend=ocr_backend)
         timings["ocr"] = time.time() - t0
-        print(f"   ⏱️  OCR extraction: {timings['ocr']:.1f}s")
+        print(f"   ⏱️  OCR extraction ({ocr_backend}): {timings['ocr']:.1f}s")
 
         # 5. Run speech transcription
         logger.info("\n4. Transcribing speech (Whisper)...")
         t0 = time.time()
-        speech_results = run_speech_transcription(video_path, device)
+        speech_results = run_speech_transcription(video_path, device, model_size=whisper_model)
         timings["whisper"] = time.time() - t0
-        print(f"   ⏱️  Whisper transcription: {timings['whisper']:.1f}s")
+        print(f"   ⏱️  Whisper transcription ({whisper_model}): {timings['whisper']:.1f}s")
 
         # Cache features for future use (excluding full frames to save space)
         if feature_cache:
@@ -1225,6 +1296,7 @@ def main():
         lora_path=args.lora_path,
         use_cache=not args.no_cache,
         cache_dir=args.cache_dir,
+        preset_config=preset_config,  # Pass preset settings for VideoMAE, OCR, Whisper
     )
 
     # Set game context if provided
