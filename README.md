@@ -829,6 +829,12 @@ python scripts/smoke_test.py -v  # Verbose mode
   - Only activate heavy reasoning for significant events
   - Target: 60-80% inference cost reduction
 
+- **Train Projector + LoRA on More Data**
+  - Expand training dataset beyond current gameplay samples
+  - Include more game genres (FPS, strategy, sports)
+  - Add glitch/bug detection examples for better accuracy
+  - Fine-tune LoRA for improved reasoning quality
+
 ### Medium Priority
 
 - **Complete Benchmark Evaluation**
