@@ -73,6 +73,8 @@ class LongVideoBenchLoader(BenchmarkLoader):
 
         # Try standard annotation files
         possible_files = [
+            "lvb_val.json",
+            "lvb_test_wo_gt.json",
             "annotations.json",
             "longvideobench.json",
             "test.json",
@@ -121,12 +123,25 @@ class LongVideoBenchLoader(BenchmarkLoader):
         # Video path
         video_path = raw.get("video_path", raw.get("video"))
         video_id = raw.get("video_id")
-        if not video_path and video_id:
-            video_path = f"videos/{video_id}.mp4"
-
-        if video_path:
+        
+        # Try to find the video file in multiple locations
+        if video_id:
+            possible_paths = [
+                Path(self.config.data_dir) / "videos" / f"{video_id}.mp4",
+                Path(self.config.data_dir) / f"{video_id}.mp4",
+                Path(self.config.data_dir) / "videos" / video_id,
+            ]
+            for p in possible_paths:
+                if p.exists():
+                    video_path = str(p)
+                    break
+            else:
+                # Default to videos subdir even if doesn't exist
+                video_path = str(Path(self.config.data_dir) / "videos" / f"{video_id}.mp4")
+        elif video_path:
             full_path = Path(self.config.data_dir) / video_path
-            video_path = str(full_path) if full_path.exists() else video_path
+            if full_path.exists():
+                video_path = str(full_path)
 
         # Question and options
         question = raw.get("question", raw.get("query", ""))

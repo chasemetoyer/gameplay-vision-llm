@@ -47,12 +47,37 @@ outputs/checkpoints/
 *.safetensors
 *.bin
 
-# Data (large files - keep locally)
-data/raw_videos/*.mp4
-data/raw_videos/*.mkv
-data/raw_videos/*.avi
-data/outputs/*.pt
-data/outputs/*.json
+# Data - Videos
+data/videos/*.mp4
+data/videos/*.mkv
+data/videos/*.avi
+data/videos/*.webm
+data/raw_videos/
+
+# Data - Cache (large perception cache)
+data/cache/
+data/search_cache/
+
+# Data - Benchmark datasets (download separately)
+data/glitchbench/
+data/longvideobench/
+data/mlvu/
+data/physgame/
+data/videogameqa/
+
+# Large files
+*.mp4
+*.mkv
+*.avi
+*.webm
+*.tar
+*.tar.*
+*.parquet
+*.zip
+*.gz
+
+# Results (regenerated during runs)
+results/
 
 # Logs
 logs/
@@ -69,7 +94,3 @@ logs/
 
 # HuggingFace cache
 .cache/
-# Downloaded videos
-data/videos/*.mp4
-data/videos/*.webm
-*.mp4

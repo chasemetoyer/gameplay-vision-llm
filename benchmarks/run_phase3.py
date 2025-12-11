@@ -257,7 +257,7 @@ class Phase3Evaluator:
         # Create sample metrics
         metrics = self.tracker.start_sample(
             sample_id=sample.sample_id,
-            benchmark=sample.benchmark,
+            benchmark=sample.benchmark_name,
             task_type=sample.task_type.value if sample.task_type else "unknown",
             model_config=config.name,
             video_duration_sec=sample.video_duration_sec or 0.0,
@@ -369,10 +369,13 @@ class Phase3Evaluator:
             Evaluation results dict
         """
         # Get loader
+        from benchmarks.loaders import BenchmarkConfig
+        loader_config = BenchmarkConfig(data_dir=data_root, max_samples=max_samples)
+        
         if benchmark == "longvideobench":
-            loader = LongVideoBenchLoader(data_root=data_root)
+            loader = LongVideoBenchLoader(loader_config)
         elif benchmark == "mlvu":
-            loader = MLVULoader(data_root=data_root)
+            loader = MLVULoader(loader_config)
         else:
             raise ValueError(f"Unknown benchmark: {benchmark}")
 
