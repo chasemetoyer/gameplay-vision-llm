@@ -793,89 +793,80 @@ python scripts/smoke_test.py -v  # Verbose mode
 
 ## Future Work
 
-### ✅ Recently Completed (gvlEval Branch)
+### ✅ Recently Completed (v1.0.5)
 
-The following items from the original roadmap have been implemented:
-
-- **✅ Temporal Context Management (HiCo):** Implemented `TemporalContextManager` with 4-level hierarchical compression (FINE → CLIP → SCENE → SESSION). Provides memory-bounded rolling context for long-horizon video understanding.
-
-- **✅ Entity-Centric Knowledge Base:** The `KnowledgeBaseBuilder` now has a frozen schema (v1.0.0) with full JSON export/import, entity categories (PLAYER, ENEMY, BOSS, NPC, etc.), and relationship types (ATTACKS, DAMAGES, HEALS, COLLIDES_WITH, etc.).
-
-- **✅ Evaluation Benchmarks:** Comprehensive 3-phase evaluation system implemented:
-  - Phase 1: GlitchBench + PhysGame (short-form glitch detection)
-  - Phase 2: VideoGameQA-Bench (game-specific QA tasks)
-  - Phase 3: LongVideoBench + MLVU (long-video stress test)
-  - Includes perception caching, metrics tracking, and model comparison infrastructure
-
-- **✅ Configuration Presets:** Hardware-aware presets (`light`, `standard`, `full`) with documented VRAM requirements and automatic component configuration.
+- **✅ SAM3 bfloat16 Optimization:** Switched to `torch.autocast` with fp32 weights - ~50% faster, ~50% less VRAM
+- **✅ SAM3 Frame Subsampling:** Configurable `sam3_fps` (0.5 FPS standard, 1.0 FPS full preset)
+- **✅ LLM Timestamp Fix:** Model now cites only timestamps from provided timeline context
+- **✅ OCR Noise Filtering:** Min confidence 0.7, min length 3, deduplication
+- **✅ Benchmark Framework:** Phase 1/2/3 runners with GlitchBench loader working
+- **✅ Evaluation Metrics:** Accuracy, timing, task breakdown output with negation-aware parsing
+- **✅ Configuration Presets:** Hardware-aware presets (`light`, `standard`, `full`)
 
 ---
 
 ### High Priority
 
+- **Improve Glitch Detection Accuracy**
+  - Model currently says "no glitch" for confirmed GlitchBench samples (0% accuracy)
+  - Need prompt engineering for subtle visual anomalies
+  - Add glitch-specific SAM3 concepts (clipping, z-fighting, texture corruption)
+  - Consider fine-tuning on glitch detection examples
+
+- **HP Bar / Damage Detection**
+  - Track player health from on-screen UI
+  - Parse damage numbers from OCR
+  - Enable "what happened to my HP" queries
+  - Boss health tracking for phase detection
+
+- **Cutscene Detection**
+  - Detect letterbox/aspect ratio changes
+  - Suppress OCR/speech during non-gameplay
+  - Avoid misinterpreting cutscene events as gameplay
+
 - **Implement Trigger Detector**
-  - Enable selective/cascaded processing based on perception outputs
-  - Monitor for high-confidence events (boss detection, explosions, deaths)
-  - Only activate heavy reasoning core when significant events detected
-  - Target: Reduce average inference cost by 60-80%
-
-- **Run Benchmark Evaluation**
-  - Execute Phase 1-3 benchmarks with real data
-  - Compare `baseline_plain` vs `gvp_light` vs `gvp_full` configurations
-  - Publish accuracy + efficiency metrics
-  - Ablation studies: KB vs no-KB, timeline vs naive long-context
-
-- **Causal Link Extraction**
-  - Explicit action→effect pairing from timeline events
-  - Game state tracking (HP, mana, cooldowns, buffs)
-  - Rule-based causal graph construction
-  - Train causal reasoning module on gameplay data
-
-- **Multi-GPU Parallelization**
-  - Pipeline parallelism: SAM3, SigLIP, OCR on separate GPUs
-  - Data parallelism: split frames across GPUs
-  - Async frame queues between pipeline stages
-  - Target: 3-5x speedup with 4 GPUs
+  - Selective processing based on perception outputs
+  - Only activate heavy reasoning for significant events
+  - Target: 60-80% inference cost reduction
 
 ### Medium Priority
 
+- **Complete Benchmark Evaluation**
+  - Run full GlitchBench (607 samples) with improved prompts
+  - PhysGame benchmark for physics violations
+  - VideoGameQA-Bench for game-specific QA
+  - Publish accuracy + efficiency comparison across presets
+
+- **Causal Link Extraction**
+  - Action→effect pairing from timeline events
+  - Game state tracking (HP, mana, cooldowns)
+  - Rule-based causal graph construction
+
+- **Multi-GPU Parallelization**
+  - Pipeline parallelism: SAM3, SigLIP, OCR on separate GPUs
+  - Async frame queues between stages
+  - Target: 3-5x speedup with 4 GPUs
+
 - **Streaming Inference**
   - Real-time processing during video playback
-  - Incremental timeline and KB updates
-  - Lower-latency response generation
   - WebSocket API for live gameplay analysis
-
-- **SigLIP Inference Optimization**
-  - Batch encode multiple regions simultaneously
-  - FP16/INT8 quantization for faster inference
-  - Async encoding with prefetching
-  - Explore SigLIP-Base for speed vs accuracy tradeoff
-
-- **Multi-Language Support**
-  - Extend Whisper to detect and transcribe multiple languages
-  - Add OCR support for non-Latin scripts (Japanese, Chinese, Korean)
-  - Game-specific font recognition
-
-- **Model Optimization**
-  - Quantize projectors to INT8
-  - Explore smaller LLM backbones (Qwen3-VL-4B)
-  - ONNX export for edge deployment
-  - Investigate SAM3 BF16 compatibility
 
 ### Low Priority / Research
 
 - **Game-Specific Adapters**
-  - Train LoRA variants for specific game genres (ARPG, FPS, MOBA)
-  - Add game state parsers for popular titles (Elden Ring, League of Legends)
-  - Community-contributed game configs
+  - LoRA variants for game genres (ARPG, FPS, MOBA)
+  - Game state parsers for popular titles
 
-- **Interactive Training**
-  - Human-in-the-loop feedback for improving responses
-  - Active learning for edge cases
-  - User correction integration
+- **Multi-Language Support**
+  - Non-Latin OCR (Japanese, Chinese, Korean)
+  - Game-specific font recognition
+
+- **Model Optimization**
+  - INT8 quantization for projectors
+  - Smaller LLM backbones (Qwen3-VL-4B)
+  - ONNX export for edge deployment
 
 - **Timeline Enrichment**
-  - Damage number parsing from OCR
   - Character position tracking across frames
   - Automatic highlight detection
 
