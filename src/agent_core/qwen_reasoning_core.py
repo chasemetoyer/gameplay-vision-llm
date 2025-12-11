@@ -727,20 +727,17 @@ After receiving tool results, incorporate them into your final answer.
 
 ## Response Format
 
-For the FIRST question about a video, provide full reasoning:
+ALWAYS structure your response with BOTH sections:
+
 **Reasoning:**
-[Brief analysis of key events - keep this concise, max 3-4 sentences]
+[Your chain-of-thought analysis - explain what evidence you found in the timeline/video and how you're interpreting it. Keep this to 2-4 sentences.]
 
 **Answer:**
-[Your answer with timestamp citations]
+[Your final answer with timestamp citations in [MM:SS] format]
 
-For FOLLOW-UP questions:
-- DO NOT repeat context you've already provided
-- DO NOT re-describe the video or boss fight
-- Focus ONLY on answering the new question directly
-- Keep your answer brief and specific
+IMPORTANT: Always include the **Reasoning:** section first, even for follow-up questions. This shows your thought process.
 
-If you need to cite timestamps, use format [MM:SS]."""
+For follow-up questions, keep your reasoning focused on the new question - don't repeat previous context."""
 
 
 # =============================================================================
