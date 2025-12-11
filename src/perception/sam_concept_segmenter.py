@@ -8,11 +8,10 @@ Model 3 (SAM 3) with Promptable Concept Segmentation (PCS). Key capabilities:
 3. Shared Perception Encoder for optimized inference
 4. Spatiotemporal mask generation with entity identity
 
-References:
-- [B: 47, A: 11] SAM 3 architecture and tracking
-- [B: 48] Promptable Concept Segmentation
-- [B: 49] Shared Perception Encoder optimization
-- [A: 54] Long-term entity tracking
+Key features:
+- SAM 3 architecture with Promptable Concept Segmentation (PCS)
+- Shared Perception Encoder for optimized inference
+- Long-term entity tracking with persistent IDs
 """
 
 from __future__ import annotations
@@ -169,7 +168,7 @@ class SAMConfig:
     # Model settings
     model_name: str = "facebook/sam3"
     device: str = "cuda"
-    dtype: torch.dtype = torch.float32  # Use float32 (TF32 still provides acceleration)
+    dtype: torch.dtype = torch.bfloat16  # Use bfloat16 for faster A100/H100 inference
 
     # Segmentation thresholds
     mask_threshold: float = 0.0  # Logit threshold for mask binarization
@@ -224,9 +223,13 @@ class Sam3ModelWrapper:
                 logger.info("TF32 enabled for faster matmul")
 
             logger.info(f"Loading SAM3 model: {self.config.model_name}")
+            
+            # IMPORTANT: Load weights in fp32, use autocast for bf16 during inference
+            # This avoids the "cursed dtype" problem where hard-casting to bf16
+            # causes scores to round down below thresholds → 0 detections
             self._model = Sam3Model.from_pretrained(
                 self.config.model_name,
-                torch_dtype=self.config.dtype,  # BF16 for A100/H100
+                torch_dtype=torch.float32,  # Keep weights in fp32!
             ).to(self.config.device)
             self._model.eval()
 
@@ -234,12 +237,17 @@ class Sam3ModelWrapper:
                 self.config.model_name,
             )
             
+            # Store whether to use autocast during inference
+            self._use_autocast = self.config.dtype in (torch.bfloat16, torch.float16)
+            self._autocast_dtype = self.config.dtype
+            
             # Optional: torch.compile for additional speedup (experimental)
             if self.config.use_compile and hasattr(torch, 'compile'):
                 logger.info("Compiling SAM3 model with torch.compile...")
                 self._model = torch.compile(self._model, mode="reduce-overhead")
             
-            logger.info(f"SAM3 model loaded successfully (dtype={self.config.dtype})")
+            dtype_mode = f"fp32 weights + {self.config.dtype} autocast" if self._use_autocast else "fp32"
+            logger.info(f"SAM3 model loaded successfully ({dtype_mode})")
         except ImportError:
             logger.warning("Sam3Model/Sam3Processor not available in transformers.")
             logger.warning("Please update transformers: pip install -U transformers")
@@ -310,15 +318,17 @@ class Sam3ModelWrapper:
                 return_tensors="pt",
             ).to(self.config.device)
             
-            # Only convert pixel_values to model dtype (bfloat16)
-            # Other tensors like input_ids must remain as integers
-            if "pixel_values" in inputs:
-                inputs["pixel_values"] = inputs["pixel_values"].to(dtype=self.config.dtype)
-            
             logger.debug("SAM3: Processor done, running model inference...")
             
-            with torch.inference_mode():
-                outputs = self._model(**inputs)
+            # Use autocast for bf16/fp16 inference (proper pattern)
+            # Keep inputs as-is (processor handles dtypes), let autocast handle compute
+            if getattr(self, '_use_autocast', False):
+                with torch.inference_mode(), torch.autocast("cuda", dtype=self._autocast_dtype):
+                    outputs = self._model(**inputs)
+            else:
+                with torch.inference_mode():
+                    outputs = self._model(**inputs)
+            
             logger.debug("SAM3: Model inference done, post-processing...")
 
             # Post-process results
@@ -817,7 +827,7 @@ class SAMConceptSegmenter:
             results = self.sam3_model.segment_with_text(
                 pil_image,
                 text_prompt=concept,
-                threshold=0.5,
+                threshold=0.3,  # Lower threshold for better detection with bfloat16
                 mask_threshold=self.config.mask_threshold,
             )
 

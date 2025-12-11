@@ -9,12 +9,10 @@ Key capabilities:
 2. Dynamic resolution visual input processing
 3. Full perception-reasoning loop orchestration
 
-References:
-- [A: 17] Intermediate representation consumption
-- [A: 18] Segmentation + retrieval strategy
-- [A: 34] Context window management
-- [B: 67] Naive Dynamic Resolution
-- [B: 82] Perception-Reasoning Loop
+Architecture highlights:
+- Hybrid retrieval (time + semantic) for context selection
+- Dynamic resolution visual input processing
+- Perception-Reasoning Loop for continuous video analysis
 """
 
 from __future__ import annotations
@@ -729,20 +727,25 @@ After receiving tool results, incorporate them into your final answer.
 
 ## Response Format
 
-For the FIRST question about a video, provide full reasoning:
+ALWAYS structure your response with BOTH sections:
+
 **Reasoning:**
-[Brief analysis of key events - keep this concise, max 3-4 sentences]
+[Your chain-of-thought analysis - explain what evidence you found in the timeline/video and how you're interpreting it. Keep this to 2-4 sentences.]
 
 **Answer:**
-[Your answer with timestamp citations]
+[Your final answer with timestamp citations in [MM:SS] format]
 
-For FOLLOW-UP questions:
-- DO NOT repeat context you've already provided
-- DO NOT re-describe the video or boss fight
-- Focus ONLY on answering the new question directly
-- Keep your answer brief and specific
+## CRITICAL: Timestamp Citations
 
-If you need to cite timestamps, use format [MM:SS]."""
+When citing timestamps in your answer:
+1. ONLY cite timestamps that ACTUALLY APPEAR in the timeline context you were given
+2. Do NOT invent or guess timestamps - if you're unsure, say "around [timestamp from timeline]"
+3. Quote the exact [MM:SS] from the timeline events when referencing specific moments
+4. If multiple events relate to your answer, cite the most relevant one
+
+IMPORTANT: Always include the **Reasoning:** section first, even for follow-up questions. This shows your thought process.
+
+For follow-up questions, keep your reasoning focused on the new question - don't repeat previous context."""
 
 
 # =============================================================================
@@ -1104,6 +1107,7 @@ class ProjectorBank:
         
         self._initialized = True
         logger.info(f"Loaded projector weights from {path}")
+        print(f"   ✅ Projector weights loaded: {path}")
     
     def save_weights(self, path: str) -> None:
         """Save projector weights."""
@@ -1402,10 +1406,17 @@ class TimelineRetriever:
         Args:
             timeline_indexer: TimelineIndexer instance with events
         """
-        self._load_embedder()
-
         # Get all events from timeline
         events = timeline_indexer._events if hasattr(timeline_indexer, "_events") else []
+        
+        # Skip if already indexed with same events
+        if (self._timeline_embeddings is not None 
+            and self._timeline_events is not None 
+            and len(self._timeline_events) == len(events)):
+            # Already indexed, skip
+            return
+        
+        self._load_embedder()
         self._timeline_events = events
 
         if not events or self._embedder is None:
@@ -1838,11 +1849,13 @@ class QwenVLCore:
                     from peft import PeftModel
                     
                     logger.info(f"Loading LoRA adapter from {self.lora_path}...")
+                    print(f"   🔧 Loading LoRA adapter from {self.lora_path}...")
                     self._model = PeftModel.from_pretrained(
                         self._model,
                         self.lora_path,
                     )
                     logger.info("LoRA adapter applied successfully")
+                    print(f"   ✅ LoRA adapter applied successfully")
                 except ImportError:
                     logger.warning("PEFT not installed. LoRA adapter not applied.")
                     logger.warning("Install with: pip install peft")
