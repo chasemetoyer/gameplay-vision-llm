@@ -169,6 +169,18 @@ The `setup_env.sh` script:
 5. Restores PyTorch CUDA libraries (fixes conflicts)
 6. Verifies all installations
 
+### System Dependencies
+
+For the `light` preset which uses Tesseract OCR:
+
+```bash
+# Ubuntu/Debian
+apt-get update && apt-get install -y tesseract-ocr
+
+# macOS
+brew install tesseract
+```
+
 ### Run Inference
 
 #### Using Configuration Presets (Recommended)

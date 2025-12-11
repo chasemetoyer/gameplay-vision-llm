@@ -74,6 +74,13 @@ ipython>=8.0.0
 # paddleocr>=3.3.0
 
 # ============================================
+# OCR (for light preset)
+# ============================================
+pytesseract>=0.3.10
+
+# SYSTEM DEPENDENCY: apt-get install tesseract-ocr
+
+# ============================================
 # SAM3 Requirement
 # ============================================
 # SAM3 (facebook/sam3) requires transformers>=5.0.0.dev0
