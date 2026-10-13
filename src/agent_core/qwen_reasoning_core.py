@@ -1863,6 +1863,19 @@ class QwenVLCore:
                     logger.warning(f"Failed to load LoRA adapter: {e}")
             
             self._model.eval()
+
+            #this loads the token for projector outputs
+            tokenizer = self._processor.tokenizer
+            tokenizer.add_tokens(["<|gvp_vis|>"], special_tokens=True)
+
+            table_rows = self._model.get_input_embeddings().weight.shape[0]
+            if len(tokenizer) > table_rows:
+                self._model.resize_token_embeddings(len(tokenizer))
+
+            self._placeholder_id = tokenizer.convert_tokens_to_ids("<|gvp_vis|>")
+
+            logger.info(f"Placeholder ID:{self._placeholder_id}, table rows: {table_rows}")
+
             logger.info("Qwen3-VL loaded successfully")
 
         except ImportError as e:
@@ -1877,6 +1890,26 @@ class QwenVLCore:
             traceback.print_exc()
             self._model = "placeholder"
             self._processor = None
+
+    def _make_injection_hook(self, vectors):
+        """Build a hook that swaps placeholder vectors for projector outputs."""
+
+        def hook(module, inputs, output):
+            input_ids = inputs[0]
+            is_placeholder = input_ids == self._placeholder_id
+            n_placeholders = int(is_placeholder.sum())
+
+            if n_placeholders == 0:
+                return output  # later generation steps: nothing to swap
+
+            if n_placeholders != vectors.shape[0]:
+                raise ValueError(
+                    f"Print placeholders does not equal vector shape placeholders: {n_placeholders} & # of vectors: {vectors.shape[0]}")
+
+            output[is_placeholder] = vectors.to(output.device, output.dtype)
+            return output
+
+        return hook
 
     def index_timeline(self, timeline_indexer) -> None:
         """
@@ -2042,6 +2075,7 @@ class QwenVLCore:
         video_timestamp: Optional[float] = None,
         track_conversation: bool = True,
         return_confidence: bool = False,
+        projected_vectors=None,
     ) -> Union[str, tuple[str, float]]:
         """
         Execute the full Perception-Reasoning Loop with multi-turn support.
@@ -2167,7 +2201,12 @@ class QwenVLCore:
             return (error_msg, 0.0) if return_confidence else error_msg
 
         # Step 7: Generate response
+        handle = None
         try:
+            if projected_vectors is not None:
+                handle = self._model.get_input_embeddings().register_forward_hook(
+                    self._make_injection_hook(projected_vectors)
+                )
             with torch.no_grad():
                 generated_ids = self._model.generate(
                     **inputs,
@@ -2222,6 +2261,10 @@ class QwenVLCore:
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             return f"[Error during generation: {e}]"
+
+        finally:
+            if handle is not None:
+                handle.remove()
 
     def clear_conversation(self) -> None:
         """Clear conversation history to start a fresh session."""
@@ -2718,7 +2761,13 @@ class PerceptionReasoningLoop:
             audio_embeddings=audio_embeddings,
         )
         multimodal_context = self.get_multimodal_context(projected)
-        
+
+        vector_list = []
+        for key in ["siglip", "videomae", "audio"]:
+            if key in projected:
+                vector_list.append(projected[key])
+        vectors = torch.cat(vector_list) if vector_list else None
+
         # Build full context string
         context_parts = []
         if temporal_summary:
@@ -2736,6 +2785,7 @@ class PerceptionReasoningLoop:
             timeline_indexer=self.timeline_indexer,
             knowledge_base=self.knowledge_base,
             region_detections=all_detections,
+            projected_vectors=vectors,
         )
         
         # Clear pending query after answering
@@ -2833,15 +2883,15 @@ class PerceptionReasoningLoop:
         
         if "siglip" in projected_embeddings:
             num_regions = projected_embeddings["siglip"].shape[0]
-            parts.append(f"[{num_regions} visual region embeddings available]")
+            parts.append("<|gvp_vis|>" * num_regions)
             
         if "videomae" in projected_embeddings:
             num_temporal = projected_embeddings["videomae"].shape[0]
-            parts.append(f"[{num_temporal} temporal video embeddings available]")
+            parts.append("<|gvp_vis|>" * num_temporal)
             
         if "audio" in projected_embeddings:
             num_audio = projected_embeddings["audio"].shape[0]
-            parts.append(f"[{num_audio} audio embeddings available]")
+            parts.append("<|gvp_vis|>" * num_audio)
         
         if parts:
             return "[Multimodal Context: " + ", ".join(parts) + "]"

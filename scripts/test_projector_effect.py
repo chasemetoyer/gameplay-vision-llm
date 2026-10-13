@@ -42,4 +42,5 @@ print("TRAINED: ",answer_trained)
 print("RANDOM: ", answer_random)
 print("OTHER: ", answer_other)
 
-print("is answer trained and answer random the same?", answer_other == answer_random)
+print("Trained vs random same?", answer_trained == answer_random)
+print("Random vs other same?", answer_random == answer_other)
