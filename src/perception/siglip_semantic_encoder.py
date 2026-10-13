@@ -268,6 +268,8 @@ class SigLIPEncoder(nn.Module):
                 pooled = self._model.get_image_features(
                     pixel_values=pixel_values.to(self._model.device)
                 )
+                if hasattr(pooled, "pooler_output"):
+                    pooled = pooled.pooler_output
                 # For sequence output, fall back to vision model
                 if hasattr(self._model, "vision_model"):
                     vision_out = self._model.vision_model(
@@ -479,7 +481,8 @@ class SigLIPSemanticEncoder:
         with torch.no_grad():
             # Use get_image_features() with processor outputs
             embedding = self.encoder._model.get_image_features(**inputs)
-        
+
+        embedding = embedding.pooler_output # take the tensor out of the object
         return embedding.squeeze(0)
 
     def encode_masked_regions(

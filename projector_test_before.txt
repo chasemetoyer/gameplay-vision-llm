@@ -1,0 +1,71 @@
+   ⏱️  Frame extraction: 6.9s
+   ⏱️  SAM3 detection: 405.8s (264 frames)
+   ⏱️  SigLIP encoding: 455.4s
+   ⏱️  VideoMAE encoding: 11.5s
+   ⏱️  Wav2Vec2 encoding: 4.9s
+   ⏱️  OCR extraction (paddleocr): 31.0s
+==================================================
+🎤 WHISPER SPEECH TRANSCRIPTION (base)
+==================================================
+   [1/4] Extracting audio from video...
+   [2/4] Loading Whisper model (base)...
+   [3/4] Transcribing audio...
+   [4/4] ✅ Transcribed 17 speech segments
+   Sample transcriptions:
+      [00:06] My loyal blade and champion of the festival, both your deeds...
+      [00:21] Now the fowl be honored and my Lord, brothers, soul will ret...
+      [02:54] Lord, brother, for the long last you have returned....
+   ⏱️  Whisper transcription (base): 9.1s
+   ⏱️  Cache save: 10.8s
+Features cached for future use
+   ✅ Projector weights loaded: outputs/projector_weights.pt
+   🔧 Loading LoRA adapter from outputs/lora_adapter...
+   ✅ LoRA adapter applied successfully
+   ⏱️  Qwen3-VL load: 19.0s
+
+============================================================
+VIDEO PROCESSING COMPLETE
+============================================================
+   Frames extracted: 528
+   SAM3 detections: 6359
+   SigLIP embeddings: 6391
+   VideoMAE embeddings: 65
+   Wav2Vec2 embeddings: 51
+   OCR text regions: 965
+   Speech segments: 17
+   Timeline events: 142
+   Cache: 1 videos, 2188.1 MB
+
+------------------------------------------------------------
+⏱️  TIMING BREAKDOWN
+------------------------------------------------------------
+   Frame extraction:         6.9s
+   SAM3 detection:           405.8s
+   SigLIP encoding:          455.4s
+   VideoMAE encoding:        11.5s
+   Wav2Vec2 encoding:        4.9s
+   OCR extraction:           31.0s
+   Whisper transcription:    9.1s
+   Cache save:               10.8s
+   Timeline building:        0.0s
+   Model initialization:     4.3s
+   Qwen3-VL load:            19.0s
+------------------------------------------------------------
+   TOTAL TIME:               958.9s (16.0 min)
+============================================================
+TRAINED:  **Reasoning:**
+The provided timeline context does not contain any explicit mention of a "phase transition" or any event that would indicate when such a transition begins. The text entries refer to gameplay actions, item management, and character status, but none describe a boss phase change, environmental shift, or similar transition mechanic. Without additional context or visual/audio cues from the video, it is not possible to determine when the phase transition begins based solely on the given information.
+
+**Answer:**
+Not determinable from the provided timeline context.
+RANDOM:  **Reasoning:**
+The provided timeline context does not contain any explicit mention of a "phase transition" or any event that would indicate when such a transition begins. The text entries refer to gameplay actions, item management, and character status, but none describe a boss phase change, environmental shift, or similar transition mechanic. Without additional context or visual/audio cues from the video, it is not possible to determine when the phase transition begins based solely on the given information.
+
+**Answer:**
+Not determinable from the provided timeline context.
+OTHER:  **Reasoning:**
+The visual frame at [00:04] shows a large, heavily armored boss with a bulky, monstrous appearance. It has a dark, imposing silhouette with visible armor plating and is wielding a large weapon. The environment suggests a dark, gothic setting with dramatic lighting, emphasizing the boss's intimidating presence. The UI text "Bloody Stash" and "Flask of Crimson Tears +11" indicates this is likely from Elden Ring, where bosses are typically large, armored, and visually distinct.
+
+**Answer:**
+The boss appears as a large, heavily armored, monstrous figure with a bulky silhouette, wielding a large weapon. It has dark, imposing armor plating and is set against a gothic, dimly lit environment with dramatic lighting [00:04].
+is answer trained and answer random the same? False
