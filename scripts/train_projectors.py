@@ -25,6 +25,13 @@ Validation: whole videos are held out and never trained on. The validation loss
 is measured once before training (random projectors, the baseline) and after
 every epoch. The checkpoint with the lowest validation loss is saved.
 
+Shuffled-embedding check: every validation description is also scored with the
+embedding of a DIFFERENT sample of the same modality. If the projectors use the
+content of the embeddings, the loss on these shuffled pairs is clearly worse
+than on the real pairs. If the two are about the same, the projectors only
+learned the format of the answers. The gap is reported with a 95% confidence
+interval.
+
 Outputs (next to --output):
 - <output>.pt              projector weights (lowest validation loss)
 - <output>_train_log.csv   one row per training step (loss, per-modality loss,
@@ -422,6 +429,61 @@ def split_by_video(samples: list, val_fraction: float, seed: int):
     return train_samples, val_samples, train_videos, val_videos
 
 
+def make_shuffled_pairs(samples: list, seed: int):
+    """
+    Build the control set for the shuffled-embedding check: the same
+    descriptions, each paired with the embedding of a DIFFERENT sample of the
+    same modality.
+
+    Modalities with fewer than 2 samples can't be shuffled, so their samples are
+    left out of both lists. Returns (real_samples, shuffled_samples), aligned so
+    position i in both lists has the same target.
+    """
+    rng = random.Random(seed)
+    by_modality = {}
+    for sample in samples:
+        by_modality.setdefault(sample["modality"], []).append(sample)
+
+    real, shuffled = [], []
+    for modality in sorted(by_modality):
+        group = by_modality[modality]
+        if len(group) < 2:
+            logger.warning(
+                f"Only {len(group)} {modality} validation sample(s); "
+                "left out of the shuffled check"
+            )
+            continue
+
+        order = list(range(len(group)))
+        rng.shuffle(order)
+        for k, i in enumerate(order):
+            j = order[(k + 1) % len(order)]  # always a different sample, never itself
+            real.append(group[i])
+            swapped = dict(group[i])
+            swapped["embedding"] = group[j]["embedding"]
+            shuffled.append(swapped)
+
+    return real, shuffled
+
+
+def paired_gap(real_losses: list, shuffled_losses: list):
+    """
+    Mean of (shuffled loss - real loss) per sample, with an approximate 95%
+    confidence interval. If the whole interval is above 0, real pairs reliably
+    beat shuffled pairs: the projectors use the content of the embeddings.
+
+    Returns (mean_gap, ci_low, ci_high).
+    """
+    diffs = [s - r for r, s in zip(real_losses, shuffled_losses)]
+    n = len(diffs)
+    mean = sum(diffs) / n
+    if n < 2:
+        return mean, float("nan"), float("nan")
+    variance = sum((d - mean) ** 2 for d in diffs) / (n - 1)
+    half_width = 1.96 * (variance / n) ** 0.5
+    return mean, mean - half_width, mean + half_width
+
+
 # =============================================================================
 # Logging helpers
 # =============================================================================
@@ -508,25 +570,26 @@ def compute_sample_loss(sample, projectors, model, tokenizer, embed_layer,
 
 
 def evaluate(val_samples, projectors, model, tokenizer, embed_layer,
-             prompt_ids, placeholder_id, config):
+             prompt_ids, placeholder_id, config, desc="Validation"):
     """
-    Average loss on the held-out videos. No weights are updated.
+    Loss on held-out samples. No weights are updated.
 
-    Returns (overall_mean_loss, {modality: [losses]}).
+    Returns (mean_loss, {modality: [losses]}, [per-sample losses in order]).
     """
     projectors.eval()
     losses = {"siglip": [], "videomae": [], "wav2vec2": []}
+    per_sample = []
 
     with torch.no_grad():
-        for sample in tqdm(val_samples, desc="Validation"):
+        for sample in tqdm(val_samples, desc=desc):
             loss = compute_sample_loss(
                 sample, projectors, model, tokenizer, embed_layer,
                 prompt_ids, placeholder_id, config,
-            )
-            losses[sample["modality"]].append(loss.item())
+            ).item()
+            losses[sample["modality"]].append(loss)
+            per_sample.append(loss)
 
-    all_losses = [value for values in losses.values() for value in values]
-    return sum(all_losses) / len(all_losses), losses
+    return sum(per_sample) / len(per_sample), losses, per_sample
 
 
 # =============================================================================
@@ -572,6 +635,11 @@ def train_projectors(config: ProjectorTrainingConfig):
     # Cap validation cost: every validation sample is a full Qwen forward pass
     if config.max_val_samples > 0 and len(val_samples) > config.max_val_samples:
         val_samples = random.Random(config.seed).sample(val_samples, config.max_val_samples)
+
+    # Control set for the shuffled-embedding check: same descriptions, wrong embeddings
+    val_samples, shuffled_val_samples = make_shuffled_pairs(val_samples, config.seed)
+    if len(val_samples) == 0:
+        raise RuntimeError("No validation samples left for the shuffled-embedding check")
 
     dataloader = DataLoader(
         train_samples,
@@ -748,31 +816,57 @@ def train_projectors(config: ProjectorTrainingConfig):
     val_log_writer = csv.writer(val_log_file)
     val_log_writer.writerow([
         "epoch", "train_loss", "val_loss",
-        "val_loss_siglip", "val_loss_videomae", "val_loss_wav2vec2", "n_val",
+        "val_loss_siglip", "val_loss_videomae", "val_loss_wav2vec2",
+        "val_loss_shuffled", "shuffle_gap", "gap_ci_low", "gap_ci_high",
+        "val_loss_shuffled_siglip", "val_loss_shuffled_videomae",
+        "val_loss_shuffled_wav2vec2", "n_val",
     ])
     logger.info(f"  Validation log: {val_log_path}")
 
     start_time = time.time()
 
+    def run_validation(epoch_number, train_loss):
+        """Validate on real and shuffled pairs, and write one row to the val log."""
+        val_loss, val_losses, real_per_sample = evaluate(
+            val_samples, projectors, model, tokenizer, embed_layer,
+            prompt_ids, placeholder_id, config, desc="Validation",
+        )
+        shuffled_loss, shuffled_losses, shuffled_per_sample = evaluate(
+            shuffled_val_samples, projectors, model, tokenizer, embed_layer,
+            prompt_ids, placeholder_id, config, desc="Validation (shuffled)",
+        )
+        gap, ci_low, ci_high = paired_gap(real_per_sample, shuffled_per_sample)
+
+        val_log_writer.writerow([
+            epoch_number,
+            "" if train_loss is None else f"{train_loss:.6f}",
+            f"{val_loss:.6f}",
+            _mean_str(val_losses["siglip"]),
+            _mean_str(val_losses["videomae"]),
+            _mean_str(val_losses["wav2vec2"]),
+            f"{shuffled_loss:.6f}",
+            f"{gap:.6f}", f"{ci_low:.6f}", f"{ci_high:.6f}",
+            _mean_str(shuffled_losses["siglip"]),
+            _mean_str(shuffled_losses["videomae"]),
+            _mean_str(shuffled_losses["wav2vec2"]),
+            len(val_samples),
+        ])
+        val_log_file.flush()
+        return val_loss, shuffled_loss, gap, ci_low, ci_high
+
     # -------------------------------------------------------------------------
-    # Baseline: validation loss with the untrained (random) projectors
+    # Baseline: the untrained (random) projectors
     # -------------------------------------------------------------------------
-    baseline_val_loss, val_losses = evaluate(
-        val_samples, projectors, model, tokenizer, embed_layer, prompt_ids, placeholder_id, config
+    baseline_val_loss, baseline_shuffled, baseline_gap, _, _ = run_validation(0, None)
+    logger.info(
+        f"Epoch 0 (random projectors) - Val loss: {baseline_val_loss:.4f} - "
+        f"Shuffled: {baseline_shuffled:.4f} - Gap: {baseline_gap:+.4f}"
     )
-    logger.info(f"Epoch 0 (random projectors) - Val loss: {baseline_val_loss:.4f}")
-    val_log_writer.writerow([
-        0, "", f"{baseline_val_loss:.6f}",
-        _mean_str(val_losses["siglip"]),
-        _mean_str(val_losses["videomae"]),
-        _mean_str(val_losses["wav2vec2"]),
-        len(val_samples),
-    ])
-    val_log_file.flush()
 
     global_step = 0
     best_val_loss = float("inf")
     best_epoch = 0
+    best_result = None
 
     for epoch in range(config.epochs):
         epoch_loss = 0.0
@@ -835,26 +929,24 @@ def train_projectors(config: ProjectorTrainingConfig):
 
         # Epoch summary: training loss, then validation on the held-out videos
         avg_loss = epoch_loss / max(num_batches, 1)
-        val_loss, val_losses = evaluate(
-            val_samples, projectors, model, tokenizer, embed_layer, prompt_ids, placeholder_id, config
-        )
+        val_loss, shuffled_loss, gap, ci_low, ci_high = run_validation(epoch + 1, avg_loss)
         logger.info(
-            f"Epoch {epoch+1}/{config.epochs} - "
-            f"Train loss: {avg_loss:.4f} - Val loss: {val_loss:.4f}"
+            f"Epoch {epoch+1}/{config.epochs} - Train loss: {avg_loss:.4f} - "
+            f"Val loss: {val_loss:.4f} - Shuffled: {shuffled_loss:.4f} - "
+            f"Gap: {gap:+.4f} (95% CI {ci_low:+.4f} to {ci_high:+.4f})"
         )
-        val_log_writer.writerow([
-            epoch + 1, f"{avg_loss:.6f}", f"{val_loss:.6f}",
-            _mean_str(val_losses["siglip"]),
-            _mean_str(val_losses["videomae"]),
-            _mean_str(val_losses["wav2vec2"]),
-            len(val_samples),
-        ])
-        val_log_file.flush()
 
         # Save the checkpoint with the lowest validation loss
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch + 1
+            best_result = {
+                "val_loss": val_loss,
+                "shuffled_val_loss": shuffled_loss,
+                "shuffle_gap": gap,
+                "gap_ci_low": ci_low,
+                "gap_ci_high": ci_high,
+            }
             projectors.save_weights(config.output_path)
             logger.info(f"  New best validation loss! Saved weights to {config.output_path}")
 
@@ -865,6 +957,7 @@ def train_projectors(config: ProjectorTrainingConfig):
     # Step 6: Final Summary
     # =========================================================================
     beat_baseline = best_val_loss < baseline_val_loss
+    uses_content = best_result is not None and best_result["gap_ci_low"] > 0
 
     logger.info("\n" + "=" * 60)
     logger.info("TRAINING COMPLETE")
@@ -875,6 +968,24 @@ def train_projectors(config: ProjectorTrainingConfig):
         logger.warning(
             "Trained projectors never beat random projectors on the held-out videos: "
             "they did not learn anything that generalizes."
+        )
+    if best_result is not None:
+        logger.info(
+            f"Shuffled-embedding check (epoch {best_epoch}): "
+            f"real {best_result['val_loss']:.4f} vs shuffled "
+            f"{best_result['shuffled_val_loss']:.4f}, gap "
+            f"{best_result['shuffle_gap']:+.4f} (95% CI "
+            f"{best_result['gap_ci_low']:+.4f} to {best_result['gap_ci_high']:+.4f})"
+        )
+    if uses_content:
+        logger.info(
+            "Real pairs reliably beat shuffled pairs: the projectors use the "
+            "content of the embeddings."
+        )
+    else:
+        logger.warning(
+            "No reliable gap between real and shuffled pairs: the projectors may have "
+            "learned the format of the answers, not the content of the embeddings."
         )
     logger.info(f"Weights saved to: {config.output_path}")
     logger.info(f"Step log: {log_path}")
@@ -888,6 +999,9 @@ def train_projectors(config: ProjectorTrainingConfig):
         "best_val_loss": best_val_loss,
         "best_epoch": best_epoch,
         "beat_random_baseline": beat_baseline,
+        "baseline_shuffled_val_loss": baseline_shuffled,
+        "best_epoch_shuffled_check": best_result,
+        "uses_input_content": uses_content,
     }
     with open(run_info_path, "w") as f:
         json.dump(run_info, f, indent=2)
