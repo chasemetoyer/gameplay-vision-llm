@@ -1312,7 +1312,24 @@ def format_for_gpt(timeline: list[dict], kb, causal_links: list[dict], visual_re
     
     return "\n".join(lines)
 
-
+def sam_results_to_visual_events(sam_results: list) -> list:
+    """
+    Turn inference's SAM3 results into the visual-event list this script saves.
+    Each detection becomes one event, with plain numbers so it can be saved as JSON.
+    """
+    events = []
+    for frame_result in sam_results:
+        for det in frame_result["detections"]:
+            bbox = det.get("bbox")
+            events.append({
+                "timestamp": float(det["timestamp"]),
+                "type": "sam_detection",
+                "label": det.get("label", "entity"),
+                "description": f"Detected {det.get('label', 'entity')}",
+                "confidence": float(det.get("confidence", 0.0)),
+                "bbox": [float(c) for c in bbox] if bbox is not None else None,
+            })
+    return events
 # =============================================================================
 # Main Pipeline
 # =============================================================================
@@ -1361,7 +1378,12 @@ def main():
     # Step 3: Run visual detection (SAM or Motion) - MUST run before OCR
     # PyTorch (SAM) and PaddlePaddle (OCR) have CUDNN conflicts - run PyTorch first!
     logger.info("Step 3/8: Running visual detection...")
-    visual_results, entity_tracker = run_visual_detection(frames, device=args.device, use_sam=args.use_sam)
+
+    # Same SAM3 function and frame subsampling as inference (every other frame)
+    from realtime_inference import run_sam3_detection as run_sam_detection_shared
+    sam_frames = frames[::2]
+    sam_results = run_sam_detection_shared(sam_frames, args.device)
+    visual_results = sam_results_to_visual_events(sam_results)
     
     # Step 4: Run OCR - AFTER PyTorch models, and force CPU to avoid CUDNN conflict
     logger.info("Step 4/8: Running OCR (on CPU to avoid CUDNN conflict)...")
@@ -1369,16 +1391,17 @@ def main():
     # Step 5: Run SigLIP (Semantic Embeddings)
     # Pass SAM results to encode masked regions when --use-sam is enabled
     logger.info("Step 5/8: Running SigLIP Encoder...")
-    sam_results_for_siglip = visual_results if args.use_sam else None
-    siglip_results = run_siglip_encoder(
-        frames, device=args.device,
-        sam_results=sam_results_for_siglip,
-        entity_tracker=entity_tracker if args.use_sam else None,
-    )
+
+    # Same SigLIP function as inference, on the same SAM3 regions
+    from realtime_inference import extract_siglip_embeddings
+    siglip_results = extract_siglip_embeddings(sam_frames, sam_results, args.device)
     
     # Step 5b: Run VideoMAE for temporal video embeddings (768-dim)
     logger.info("Step 5b: Running VideoMAE Encoder (temporal embeddings)...")
-    videomae_results = run_videomae_encoder(frames, device=args.device)
+
+    # Same VideoMAE function as inference (16-frame windows, 8-frame stride)
+    from realtime_inference import extract_videomae_embeddings
+    videomae_results = extract_videomae_embeddings(frames, args.device)
     
     # Step 6: Run Audio Extraction (text transcription for timeline)
     if not args.skip_audio:
@@ -1429,7 +1452,7 @@ def main():
             "ocr_results": ocr_results,
             "audio_results": audio_results,
             "siglip_embeddings": [
-                {"timestamp": s["timestamp"], "shape": s["embedding_shape"]} 
+                {"timestamp": s["timestamp"], "shape": list(s["embedding"].shape)}
                 for s in siglip_results
             ]
         }, f, indent=2)
@@ -1453,14 +1476,15 @@ def main():
     
     embedding_data = {
         # SigLIP embeddings (1152-dim) - for visual region projector
-        "siglip": [{
+            "siglip": [{
             "timestamp": s["timestamp"],
-            "embedding": s["embedding"],  # Actual tensor
-            "shape": s["embedding_shape"],
-        } for s in siglip_results if "embedding" in s],
-        
-        # VideoMAE embeddings (768-dim) - for temporal video projector (transformers 5.x compatible)
-        "videomae": videomae_results.get("embeddings", []),
+            "label": s.get("label", "region"),  # SAM3 concept, or "full_frame"
+            "embedding": s["embedding"],
+            "shape": list(s["embedding"].shape),
+        } for s in siglip_results],
+
+        # VideoMAE embeddings (768-dim)
+        "videomae": videomae_results,
         
         # Wav2Vec2 embeddings (1024-dim) - for audio projector (transformers 5.x compatible)
         "wav2vec2": wav2vec_results.get("embeddings", []),

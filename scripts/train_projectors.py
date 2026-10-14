@@ -14,6 +14,13 @@ Training approach: Generative - optimize projectors so that the frozen LLM can
 generate an event description from the projected embedding alone. The prompt is
 a fixed instruction and never contains the description itself (no answer leak).
 
+Targets (what Qwen must produce from the projected vector alone):
+- SigLIP:   the region's own SAM3 label, e.g. "boss" or "health bar"
+- VideoMAE: the distinct SAM3 labels in the window, e.g. "enemy, health bar, player"
+- Wav2Vec2: the Whisper transcript in the window
+Each target depends on what its own embedding shows, so the shuffled check can
+tell whether the projectors use that content.
+
 Prompt format matches inference: Qwen's chat template, with the placeholder token
 <|gvp_vis|> inside the user message. The projected vector replaces the
 placeholder's embedding, the same swap the inference hook makes.
@@ -62,6 +69,7 @@ import random
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 
@@ -215,6 +223,10 @@ NO_TEMPORAL_CONTEXT = "Temporal video segment"
 NO_AUDIO_CONTEXT = "Audio segment detected"
 PLACEHOLDER_CONTEXTS = {NO_VISUAL_CONTEXT, NO_TEMPORAL_CONTEXT, NO_AUDIO_CONTEXT}
 
+# SigLIP labels with nothing region-specific to learn: whole-frame embeddings
+# (frames with no detection) and the generic default label
+NO_REGION_LABELS = {"full_frame", "region"}
+
 # Must match the token added in src/agent_core/qwen_reasoning_core.py
 PLACEHOLDER_TOKEN = "<|gvp_vis|>"
 # The training instruction: one placeholder, never the description itself
@@ -262,21 +274,30 @@ class MultimodalProjectorDataset(Dataset):
             for i, emb_data in enumerate(siglip_embeddings):
                 embedding = emb_data.get("embedding")
                 timestamp = emb_data.get("timestamp", 0)
+                label = emb_data.get("label")
 
                 if embedding is None:
                     continue
 
-                # Find corresponding visual event for context
-                context = self._find_visual_context(timestamp, visual_events)
-                if context in PLACEHOLDER_CONTEXTS:
+                # "entity" is what the old SAM3 label bug produced for every region
+                if label == "entity":
+                    raise ValueError(
+                        f"{video_name} has the SigLIP label 'entity' (the old SAM3 "
+                        "label bug). Re-extract this video with the fixed code."
+                    )
+
+                # The target is this region's own SAM3 label, so it depends on
+                # what this embedding shows. Whole-frame embeddings and files
+                # without labels have nothing region-specific to learn.
+                if label is None or label in NO_REGION_LABELS:
                     self.skipped += 1
                     continue
 
                 self.samples.append({
                     "embedding": embedding,
                     "modality": "siglip",
-                    "context": context,
-                    "target": context,
+                    "context": label,
+                    "target": label,
                     "timestamp": timestamp,
                     "video": video_name,
                 })
@@ -337,32 +358,14 @@ class MultimodalProjectorDataset(Dataset):
         if max_samples > 0 and len(self.samples) > max_samples:
             self.samples = self.samples[:max_samples]
 
-    def _find_visual_context(self, timestamp: float, visual_events: list) -> str:
-        """Find visual events near a timestamp."""
-        nearby = []
-        for event in visual_events:
-            event_ts = event.get("timestamp", 0)
-            if abs(event_ts - timestamp) < 2.0:  # Within 2 seconds
-                desc = event.get("description", "")
-                if desc:
-                    nearby.append(desc)
-
-        if nearby:
-            return "; ".join(nearby[:3])  # Limit to 3 events
-        return NO_VISUAL_CONTEXT
-
     def _find_temporal_context(self, start: float, end: float, visual_events: list) -> str:
-        """Find visual events in a time range."""
-        in_range = []
-        for event in visual_events:
-            event_ts = event.get("timestamp", 0)
-            if start <= event_ts <= end:
-                desc = event.get("description", "")
-                if desc:
-                    in_range.append(desc)
-
-        if in_range:
-            return "; ".join(in_range[:5])  # Limit to 5 events
+        """The distinct SAM3 labels detected in a time range, e.g. "enemy, health bar, player"."""
+        labels = sorted({
+            event["label"] for event in visual_events
+            if start <= event.get("timestamp", 0) <= end and event.get("label")
+        })
+        if labels:
+            return ", ".join(labels)
         return NO_TEMPORAL_CONTEXT
 
     def _find_audio_context(self, start: float, end: float, audio_transcripts: list) -> str:
@@ -659,6 +662,8 @@ def train_projectors(config: ProjectorTrainingConfig):
     logger.info(f"    SigLIP: {siglip_count}")
     logger.info(f"    VideoMAE: {videomae_count}")
     logger.info(f"    Wav2Vec2: {wav2vec_count}")
+    siglip_labels = Counter(s["target"] for s in train_samples if s["modality"] == "siglip")
+    logger.info(f"    SigLIP labels: {dict(siglip_labels.most_common())}")
     logger.info(f"  Validation samples: {len(val_samples)}")
 
     # =========================================================================
@@ -774,7 +779,7 @@ def train_projectors(config: ProjectorTrainingConfig):
     # Next-token loss through the frozen Qwen: chat format, one placeholder,
     # no description in the prompt. A new name, so these runs can't be
     # confused with runs of any earlier objective.
-    objective = "generative_lm_chat_placeholder"
+    objective = "generative_lm_region_labels"
     log_base = os.path.splitext(config.output_path)[0]
     log_path = f"{log_base}_train_log.csv"
     val_log_path = f"{log_base}_val_log.csv"
@@ -786,6 +791,12 @@ def train_projectors(config: ProjectorTrainingConfig):
         "objective": objective,
         "prompt_text": prompt_text,
         "placeholder_id": placeholder_id,
+        "targets": {
+            "siglip": "the region's own SAM3 label",
+            "videomae": "distinct SAM3 labels in the window",
+            "wav2vec2": "Whisper transcript in the window",
+        },
+        "train_siglip_labels": dict(siglip_labels.most_common()),
         "config": {key: str(value) for key, value in vars(config).items()},
         "train_videos": train_videos,
         "val_videos": val_videos,

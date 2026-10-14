@@ -205,12 +205,15 @@ def run_sam3_detection(
                 
                 detections = []
                 for entity in entities:
+                    seg_mask = entity.frame_masks.get(frame_idx)
+                    box = seg_mask.bbox if seg_mask is not None else None
                     detections.append({
                         "timestamp": timestamp,
-                        "label": entity.label if hasattr(entity, 'label') else "entity",
-                        "confidence": entity.confidence if hasattr(entity, 'confidence') else 0.8,
-                        "bbox": entity.bbox if hasattr(entity, 'bbox') else None,
-                        "mask": entity.frame_masks.get(frame_idx) if hasattr(entity, 'frame_masks') else None,
+                        "label": entity.concept_label,  # the SAM3 concept that matched
+                        "entity_id": entity.entity_id,
+                        "confidence": float(entity.confidence),
+                        "bbox": (box.x_min, box.y_min, box.x_max + 1, box.y_max + 1) if box is not None else None,
+                        "mask": seg_mask,
                     })
                 
                 all_detections.append({
@@ -232,14 +235,10 @@ def run_sam3_detection(
         return all_detections
         
     except ImportError as e:
-        logger.warning(f"SAM3 not available: {e}")
-        logger.info("Falling back to full-frame processing...")
-        return [{"timestamp": t, "frame": f, "detections": []} for t, f in frames]
+        raise
     except Exception as e:
         logger.warning(f"SAM3 detection failed: {e}")
-        return [{"timestamp": t, "frame": f, "detections": []} for t, f in frames]
-
-
+        raise
 # =============================================================================
 # Embedding Extraction
 # =============================================================================
@@ -338,9 +337,11 @@ def extract_videomae_embeddings(frames: list[tuple[float, Image.Image]], device:
                 outputs = model(**inputs)
                 # Pool over sequence dimension
                 embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0)
-            
+
             embeddings.append({
                 "timestamp": mid_timestamp,
+                "start_time": chunk_frames[0][0],
+                "end_time": chunk_frames[-1][0],
                 "embedding": embedding.cpu(),
             })
         
