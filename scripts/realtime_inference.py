@@ -264,6 +264,7 @@ def extract_siglip_embeddings(
         encoder = SigLIPSemanticEncoder(config)
         
         embeddings = []
+        skipped_regions = 0
         
         # Use SAM3 regions if available
         if sam_results and any(d["detections"] for d in sam_results):
@@ -276,52 +277,24 @@ def extract_siglip_embeddings(
                 if sam_frame["detections"]:
                     # Encode each detected region
                     for det in sam_frame["detections"]:
-                        try:
-                            if det.get("mask") and hasattr(det["mask"], 'mask'):
-                                # Use masked region
-                                mask = det["mask"].mask
-                                masked = frame_np.copy()
-                                masked[~mask] = 0
-                                region_img = Image.fromarray(masked)
-                            elif det.get("bbox"):
-                                # Crop to bbox
-                                x1, y1, x2, y2 = det["bbox"]
-                                region_img = frame.crop((x1, y1, x2, y2))
-                            else:
-                                region_img = frame
-                            
-                            emb = encoder.encode_image(region_img)
-                            if emb is not None:
-                                embeddings.append({
-                                    "timestamp": timestamp,
-                                    "label": det.get("label", "region"),
-                                    "embedding": emb.cpu() if isinstance(emb, torch.Tensor) else torch.tensor(emb),
-                                })
-                        except Exception as e:
-                            logger.debug(f"Region encoding failed: {e}")
-                else:
-                    # No detections, encode full frame
-                    emb = encoder.encode_image(frame)
-                    if emb is not None:
+                        bbox = det.get("bbox")
+                        if bbox is None and det.get("mask") is not None and hasattr(det["mask"], "mask"):
+                            ys, xs = np.where(det["mask"].mask)
+                            if len(xs) > 0:
+                                bbox = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+                        if bbox is None:
+                            skipped_regions += 1
+                            continue
+                        emb = encoder.encode_region(frame, bbox)
+                        if emb is None:  # box with no area
+                            skipped_regions += 1
+                            continue
                         embeddings.append({
                             "timestamp": timestamp,
-                            "label": "full_frame",
-                            "embedding": emb.cpu() if isinstance(emb, torch.Tensor) else torch.tensor(emb),
+                            "label": det.get("label", "region"),
+                            "embedding": emb.cpu(),
                         })
-        else:
-            # Full-frame encoding (fallback)
-            logger.info("Encoding full frames with SigLIP...")
-            for timestamp, frame in tqdm(frames, desc="SigLIP (frames)"):
-                try:
-                    emb = encoder.encode_image(frame)
-                    if emb is not None:
-                        embeddings.append({
-                            "timestamp": timestamp,
-                            "label": "full_frame",
-                            "embedding": emb.cpu() if isinstance(emb, torch.Tensor) else torch.tensor(emb),
-                        })
-                except Exception as e:
-                    logger.warning(f"SigLIP failed at {timestamp:.1f}s: {e}")
+        logger.info(f"SigLIP: skipped {skipped_regions} regions with no usable box")
         
         if embeddings:
             logger.info(f"SigLIP: {len(embeddings)} embeddings ({embeddings[0]['embedding'].shape[-1]}-dim)")

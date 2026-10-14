@@ -451,7 +451,7 @@ def run_wav2vec2_encoder(video_path: str, device: str = "cuda"):
         os.unlink(tmp_path)
         
         # Process in 30-second chunks
-        chunk_duration = 30.0
+        chunk_duration = 10.0
         chunk_samples = int(chunk_duration * sr)
         embeddings = []
         
@@ -460,6 +460,12 @@ def run_wav2vec2_encoder(video_path: str, device: str = "cuda"):
         for chunk_start in range(0, len(audio), chunk_samples):
             chunk_end = min(chunk_start + chunk_samples, len(audio))
             chunk = audio[chunk_start:chunk_end]
+
+            # Skip a leftover chunk under 1 second, the same as inference
+            if len(chunk) < sr:
+                logger.info(f"skipping a {len(chunk) / sr:.2f}s leftover audio chunk")
+                continue
+
             
             start_time = chunk_start / sr
             end_time = chunk_end / sr
@@ -489,10 +495,8 @@ def run_wav2vec2_encoder(video_path: str, device: str = "cuda"):
         }
         
     except Exception as e:
-        logger.warning(f"Wav2Vec2 failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return {"total_duration": 0, "num_embeddings": 0, "embeddings": [], "embedding_dim": 1024}
+        logger.error(f"Wav2Vec2 failed {e}")
+        raise
 
 
 # =============================================================================
@@ -515,7 +519,11 @@ def run_siglip_encoder(frames: list[tuple[float, Image.Image]], device: str = "c
     encoder = SigLIPSemanticEncoder(config)
     
     embeddings = []
-    
+    skipped_regions = 0
+    if sam_results is not None and entity_tracker is None:
+        raise ValueError("SAM results were given without an entity tracker; "
+                         "region encoding would silently fall back to full frames")
+
     # If we have SAM results, encode masked regions
     if sam_results and entity_tracker:
         logger.info("Encoding SAM3 masked regions with SigLIP...")
@@ -549,43 +557,33 @@ def run_siglip_encoder(frames: list[tuple[float, Image.Image]], device: str = "c
                 continue
             
             # Create masks from bounding boxes for each detection
+            # Encode each detected region the same way inference does
             for det in frame_dets:
                 bbox = det.get("bbox")
                 entity_type = det.get("entity_type", "unknown")
                 entity_id = det.get("entity_id", f"{entity_type}_{timestamp}")
                 description = det.get("description", f"Detected {entity_type}")
-                
+
                 if bbox is None:
+                    skipped_regions += 1
                     continue
-                
-                try:
-                    # Create mask from bbox
-                    x1, y1, x2, y2 = [int(c) for c in bbox]
-                    mask = np.zeros(frame_np.shape[:2], dtype=np.bool_)
-                    mask[y1:y2, x1:x2] = True
-                    
-                    # Encode masked region
-                    region_embeddings = encoder.encode_masked_regions(
-                        frame_np, 
-                        [(entity_id, mask)]
-                    )
-                    
-                    if region_embeddings:
-                        emb = region_embeddings[0]
-                        embeddings.append({
-                            "timestamp": timestamp,
-                            "embedding": emb.embedding.cpu(),
-                            "embedding_shape": list(emb.embedding.shape),
-                            "entity_type": entity_type,
-                            "entity_id": entity_id,
-                            "description": description,
-                            "bbox": bbox,
-                        })
-                except Exception as e:
-                    logger.warning(f"SigLIP mask encoding failed for {entity_type} at {timestamp:.1f}s: {e}")
-            
-            if idx % 20 == 0:
-                logger.info(f"SigLIP encoded frame {idx}/{len(frames)} ({len(embeddings)} total embeddings)")
+
+                embedding = encoder.encode_region(frame, bbox)
+                if embedding is None:  # box with no area
+                    skipped_regions += 1
+                    continue
+
+                embeddings.append({
+                    "timestamp": timestamp,
+                    "embedding": embedding.cpu(),
+                    "embedding_shape": list(embedding.shape),
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "description": description,
+                    "bbox": bbox,
+                })
+            logger.info(f"SigLIP encoded {len(embeddings)} regions with tensors "
+                        f"(skipped {skipped_regions} with no usable box)")
     
     else:
         # Fallback: encode full frames
@@ -719,7 +717,7 @@ def run_sam_detection(frames: list[tuple[float, Image.Image]], device: str = "cu
         from perception.sam_concept_segmenter import Sam3ModelWrapper, SAMConfig
         
         # Default prompts for gameplay
-        prompts = ["character", "enemy", "boss", "health bar", "weapon"]
+        prompts = ["player", "enemy", "boss", "health bar", "weapon", "character", "object"]
         
         config = SAMConfig(device=device)
         segmenter = Sam3ModelWrapper(config)
@@ -989,7 +987,7 @@ def build_timeline_with_indexer(
     # Add audio events
     if audio_results:
         for audio in audio_results:
-            modality = ModalityType.SPEECH if audio["type"] == "dialogue" else ModalityType.AUDIO
+            modality = ModalityType.SPEECH if audio["type"] in ("dialogue", "speech") else ModalityType.AUDIO
             indexer.add_event(
                 timestamp=audio["timestamp"],
                 modality=modality,
@@ -1367,13 +1365,16 @@ def main():
     
     # Step 4: Run OCR - AFTER PyTorch models, and force CPU to avoid CUDNN conflict
     logger.info("Step 4/8: Running OCR (on CPU to avoid CUDNN conflict)...")
-    ocr_results = run_ocr(frames, device="cpu")  # Force CPU regardless of args.device
     
     # Step 5: Run SigLIP (Semantic Embeddings)
     # Pass SAM results to encode masked regions when --use-sam is enabled
     logger.info("Step 5/8: Running SigLIP Encoder...")
     sam_results_for_siglip = visual_results if args.use_sam else None
-    siglip_results = run_siglip_encoder(frames, device=args.device, sam_results=sam_results_for_siglip)
+    siglip_results = run_siglip_encoder(
+        frames, device=args.device,
+        sam_results=sam_results_for_siglip,
+        entity_tracker=entity_tracker if args.use_sam else None,
+    )
     
     # Step 5b: Run VideoMAE for temporal video embeddings (768-dim)
     logger.info("Step 5b: Running VideoMAE Encoder (temporal embeddings)...")
@@ -1382,7 +1383,8 @@ def main():
     # Step 6: Run Audio Extraction (text transcription for timeline)
     if not args.skip_audio:
         logger.info("Step 6/8: Running Audio Extraction...")
-        audio_results = run_audio_extraction(args.video, device=args.device)
+        from realtime_inference import run_speech_transcription
+        audio_results = run_speech_transcription(args.video, device=args.device, model_size="base")
         
         # Step 6b: Run Wav2Vec2 for audio embeddings (1024-dim)
         logger.info("Step 6b: Running Wav2Vec2 Encoder (audio embeddings)...")
@@ -1391,7 +1393,12 @@ def main():
         logger.info("Step 6/8: Skipping audio (--skip-audio flag)")
         audio_results = []
         wav2vec_results = {"total_duration": 0, "num_embeddings": 0, "embeddings": [], "embedding_dim": 1024}
-    
+
+    # Same OCR function as inference, run after the PyTorch models like inference does
+    from realtime_inference import run_ocr_extraction
+    ocr_results = run_ocr_extraction(frames, args.device, backend="paddleocr")
+
+
     # Step 7: Build timeline using TimelineIndexer
     logger.info("Step 7/8: Building timeline with TimelineIndexer...")
     timeline, indexer = build_timeline_with_indexer(

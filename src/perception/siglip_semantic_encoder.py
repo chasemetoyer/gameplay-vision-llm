@@ -484,6 +484,19 @@ class SigLIPSemanticEncoder:
 
         embedding = embedding.pooler_output # take the tensor out of the object
         return embedding.squeeze(0)
+    def encode_region(self, frame: Image.Image, bbox):
+        """
+        Encode one detected region: crop the frame to its box, then encode the
+        crop exactly like a full image. Training (extract_features.py) and
+        inference (realtime_inference.py) both call this, so their region
+        embeddings are computed the same way. Returns None for a box with no area.
+        """
+        x1, y1, x2, y2 = [int(round(c)) for c in bbox]
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(frame.width, x2), min(frame.height, y2)
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return self.encode_image(frame.crop((x1, y1, x2, y2)))
 
     def encode_masked_regions(
         self,
