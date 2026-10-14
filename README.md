@@ -137,10 +137,10 @@ The project utilizes a **Hybrid Retrieval** system for context fetching, which i
 ### Tested Environment
 
 This project has been tested on:
-- **RunPod Image**: `runpod/pytorch:2.8.0-py3.12-cuda12.8.0-ubuntu24.04`
+- **RunPod Image**: `runpod/pytorch:1.4.0-cu1281-torch280-ubuntu2404`
 - **Python**: 3.12+
 - **CUDA**: 12.8+
-- **GPU**: NVIDIA H200, A100 (40GB+ recommended)
+- **GPU**: NVIDIA A40, H200, A100 (40GB+ recommended)
 
 ### Quick Start (Recommended)
 

@@ -4,7 +4,7 @@ Loaded 528 frames and 6391 embeddings from cache
    ✅ Projector weights loaded: outputs/projector_weights.pt
    🔧 Loading LoRA adapter from outputs/lora_adapter...
    ✅ LoRA adapter applied successfully
-   ⏱️  Qwen3-VL load: 69.7s
+   ⏱️  Qwen3-VL load: 15.9s
 
 ============================================================
 VIDEO PROCESSING COMPLETE
@@ -22,12 +22,12 @@ VIDEO PROCESSING COMPLETE
 ------------------------------------------------------------
 ⏱️  TIMING BREAKDOWN
 ------------------------------------------------------------
-   Cache load:               12.3s
-   Timeline building:        0.1s
-   Model initialization:     13.2s
-   Qwen3-VL load:            69.7s
+   Cache load:               10.0s
+   Timeline building:        0.0s
+   Model initialization:     10.7s
+   Qwen3-VL load:            15.9s
 ------------------------------------------------------------
-   TOTAL TIME:               95.3s (1.6 min)
+   TOTAL TIME:               36.6s (0.6 min)
 ============================================================
 TRAINED:  **Reasoning:**
 The question asks when the phase transition begins. The provided timeline context includes several text entries, but none of them explicitly mention a "phase transition" or any clear indicator of a boss fight phase change (which is common in games like Elden Ring). The text entries appear to be fragmented dialogue or game UI text, not game mechanics or phase transition markers. Without any clear visual or textual cue in the timeline indicating a phase transition (e.g., boss health bar changing, environment shifting, or specific in-game text like "Phase 2 begins"), it is impossible to determine when the phase transition begins based on the given information.
@@ -44,4 +44,5 @@ The visual evidence from the frame shows the boss, Radahn, as a massive, heavily
 
 **Answer:**
 The boss, Radahn, is a towering, heavily armored humanoid with a dark, demonic appearance. He has a muscular build, a horned helmet, and wields a large, curved blade. His presence is emphasized by the dark, desolate environment and dramatic lighting. [05:07]
-is answer other and answer random the same? False
+Trained vs random same? False
+Random vs other same? False
